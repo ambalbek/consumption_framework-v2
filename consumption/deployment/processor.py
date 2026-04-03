@@ -79,6 +79,13 @@ class DeploymentDataProcessor:
                 f"cost computation will be skipped"
             )
 
+        # V7 Stats must use .monitoring-es-7-* to avoid mapping conflicts
+        # with V8 indices when a custom pattern like .monitoring* is used
+        from .monitoring_stats_connector import DEFAULT_MONITORING_INDEX_PATTERN_V7
+        stats_index_pattern = (
+            DEFAULT_MONITORING_INDEX_PATTERN_V7 if is_v7 else monitoring_index_pattern
+        )
+
         # Helper: create Stats object with correct timestamp_field
         def _make_stats(cls, *args):
             obj = cls(*args)
@@ -93,7 +100,7 @@ class DeploymentDataProcessor:
 
         # Fetch cluster data first — needed for node tier mapping
         self.cluster_data = _make_stats(
-            cluster_stats_cls, es, monitoring_index_pattern
+            cluster_stats_cls, es, stats_index_pattern
         ).search_as_dataframe([range_flt, id_filter])
 
         if self.cluster_data.empty:
@@ -106,7 +113,7 @@ class DeploymentDataProcessor:
             return
 
         # Fetch node data and merge with cluster data for tier info
-        node_df = _make_stats(node_stats_cls, es, monitoring_index_pattern).search_as_dataframe(
+        node_df = _make_stats(node_stats_cls, es, stats_index_pattern).search_as_dataframe(
             [range_flt, id_filter]
         )
 
@@ -150,7 +157,7 @@ class DeploymentDataProcessor:
 
         # Fetch index data (may be empty if index metricset not collected)
         self.index_data = _make_stats(
-            index_stats_cls, es, monitoring_index_pattern, parsing_regex_str
+            index_stats_cls, es, stats_index_pattern, parsing_regex_str
         ).search_as_dataframe([range_flt, id_filter])
 
         if self.index_data.empty:
@@ -168,7 +175,7 @@ class DeploymentDataProcessor:
             ts_field,
         )
         shard_data = (
-            _make_stats(shard_stats_cls, es, monitoring_index_pattern)
+            _make_stats(shard_stats_cls, es, stats_index_pattern)
             .search_as_dataframe([shard_range_flt, id_filter])
         )
 

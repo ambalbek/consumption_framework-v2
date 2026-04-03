@@ -263,7 +263,8 @@ def _iter_source_walks(
     Custom monitoring_index_pattern is used for both when provided.
     """
     v8_index = monitoring_index_pattern or DEFAULT_MONITORING_INDEX_PATTERN
-    v7_index = monitoring_index_pattern or DEFAULT_MONITORING_INDEX_PATTERN_V7
+    # V7 always uses its own pattern to avoid mapping conflicts with V8 indices
+    v7_index = DEFAULT_MONITORING_INDEX_PATTERN_V7
 
     # V8/V9 source walk (metricbeat format: @timestamp, elasticsearch.cluster.name)
     for from_ts, elasticsearch_id in _source_walk(
