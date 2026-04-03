@@ -440,6 +440,9 @@ class NodeStats(Stats):
     def search_as_dataframe(self, filters: List[Dict[str, Any]] = []):
         df = super().search_as_dataframe(filters)
 
+        if df.empty:
+            return df
+
         column_mapping = {
             "elasticsearch.node.id": "id",
             "dv_elasticsearch.node.stats.os.cgroup.cpu.stat.times_throttled.count": "cpu_throttled_count_delta",
@@ -574,6 +577,9 @@ class IndexStats(Stats):
     ):
         df = super().search_as_dataframe(filters)
 
+        if df.empty:
+            return df
+
         column_mapping = {
             "elasticsearch.index.name": "name",
             "dv_elasticsearch.index.total.docs.count": "total_docs_count_delta",
@@ -688,6 +694,9 @@ class ShardStats(Stats):
         filters: List[Dict[str, Any]] = [],
     ):
         df = super().search_as_dataframe(filters)
+
+        if df.empty:
+            return df
 
         column_mapping = {
             "elasticsearch.index.name": "index_name",
@@ -812,6 +821,9 @@ class NodeStatsV7(Stats):
     def search_as_dataframe(self, filters: List[Dict[str, Any]] = []):
         df = super().search_as_dataframe(filters)
 
+        if df.empty:
+            return df
+
         column_mapping = {
             "source_node.uuid": "id",
             "dv_node_stats.os.cgroup.cpu.stat.number_of_times_throttled": "cpu_throttled_count_delta",
@@ -920,6 +932,9 @@ class IndexStatsV7(Stats):
     ):
         df = super().search_as_dataframe(filters)
 
+        if df.empty:
+            return df
+
         column_mapping = {
             "index_stats.index": "name",
             "dv_index_stats.total.docs.count": "total_docs_count_delta",
@@ -1008,6 +1023,9 @@ class ShardStatsV7(Stats):
         filters: List[Dict[str, Any]] = [],
     ):
         df = super().search_as_dataframe(filters)
+
+        if df.empty:
+            return df
 
         column_mapping = {
             "shard.index": "index_name",
