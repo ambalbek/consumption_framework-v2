@@ -146,12 +146,19 @@ class DeploymentDataProcessor:
             "memory_limit_bytes",
         ] = None
 
-        if not self.skip_prices:
-            # Check if nodes have AWS cloud metadata for real pricing
+        # If cloud metadata is missing (V7 path), fetch it from V8 metricbeat data
+        has_cloud = (
+            "instance_type" in self.node_data.columns
+            and self.node_data["instance_type"].notna().any()
+        )
+        if not has_cloud:
+            self._enrich_cloud_metadata(es, monitoring_index_pattern)
             has_cloud = (
                 "instance_type" in self.node_data.columns
                 and self.node_data["instance_type"].notna().any()
             )
+
+        if not self.skip_prices:
 
             if has_cloud:
                 from ..utils.aws_pricing import get_ec2_hourly_price
@@ -265,6 +272,90 @@ class DeploymentDataProcessor:
             how="left",
             suffixes=(None, ""),
         )
+
+    def _enrich_cloud_metadata(self, es, monitoring_index_pattern):
+        """
+        Fetch cloud metadata (instance_type, region, account_id) from V8 metricbeat
+        data and apply it to node_data. V7 internal monitoring doesn't include cloud
+        fields, but V8 metricbeat monitoring the same nodes does.
+        """
+        node_ids = self.node_data["id"].unique().tolist()
+        if not node_ids:
+            return
+
+        try:
+            # Query V8 metricbeat data for cloud info per node
+            response = es.search(
+                index=monitoring_index_pattern or ".monitoring-es-8-*,.monitoring-es-9-*",
+                size=0,
+                allow_no_indices=True,
+                expand_wildcards=["open", "hidden"],
+                query={
+                    "bool": {
+                        "filter": [
+                            {"exists": {"field": "cloud.machine.type"}},
+                            {"terms": {"elasticsearch.node.id": node_ids}},
+                        ]
+                    }
+                },
+                aggs={
+                    "per_node": {
+                        "terms": {
+                            "field": "elasticsearch.node.id",
+                            "size": len(node_ids),
+                        },
+                        "aggs": {
+                            "cloud_info": {
+                                "top_metrics": {
+                                    "metrics": [
+                                        {"field": "cloud.machine.type"},
+                                        {"field": "cloud.region"},
+                                        {"field": "cloud.account.id"},
+                                    ],
+                                    "sort": {"@timestamp": "desc"},
+                                }
+                            }
+                        },
+                    }
+                },
+            )
+
+            buckets = (
+                response.get("aggregations", {})
+                .get("per_node", {})
+                .get("buckets", [])
+            )
+
+            if not buckets:
+                logger.debug("No cloud metadata found in V8 monitoring data")
+                return
+
+            # Build node_id -> cloud info mapping
+            cloud_map = {}
+            for bucket in buckets:
+                node_id = bucket["key"]
+                metrics = bucket["cloud_info"]["top"][0]["metrics"]
+                cloud_map[node_id] = {
+                    "instance_type": metrics.get("cloud.machine.type"),
+                    "cloud_region": metrics.get("cloud.region"),
+                    "cloud_account_id": metrics.get("cloud.account.id"),
+                }
+
+            # Apply to node_data
+            for col in ["instance_type", "cloud_region", "cloud_account_id"]:
+                if col not in self.node_data.columns:
+                    self.node_data[col] = None
+                self.node_data[col] = self.node_data["id"].map(
+                    lambda nid: cloud_map.get(nid, {}).get(col)
+                ).fillna(self.node_data[col])
+
+            logger.info(
+                f"Enriched {len(cloud_map)} nodes with AWS cloud metadata "
+                f"from V8 monitoring data"
+            )
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch cloud metadata from V8 data: {e}")
 
     def _get_datastreams_usages(self) -> Iterable:
         if self.index_data.empty:
