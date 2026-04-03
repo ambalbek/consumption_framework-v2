@@ -245,81 +245,26 @@ class DeploymentDataProcessor:
             suffixes=(None, ""),
         )
 
-    @staticmethod
-    def _parse_app_from_name(name: str) -> str:
-        """
-        Extract app name from index/datastream name pattern: foo*-appname-*
-        Takes the second segment (split by dash).
-        E.g., "foobar-payments" → "payments", "foo1-auth" → "auth"
-        """
-        parts = name.split("-")
-        if len(parts) >= 2:
-            return parts[1]
-        return name
-
     def _enrich_app_field(self, es):
         """
-        Add 'app' field to index_data.
-        1. Try looking up 'app' field from actual data indices
-        2. Fall back to parsing from index name (second segment: foo*-appname-*)
+        Extract app name from datastream name pattern: foo*-appname-*
+        Splits by dash, takes everything after the first segment (the prefix).
+        E.g., "foobar-payments" → "payments"
+              "foo1-auth-service" → "auth-service"
+              "foo-logging" → "logging"
         """
         if "datastream" not in self.index_data.columns:
             return
 
-        # Try querying data indices for 'app' field
-        app_from_es = False
-        if "name" in self.index_data.columns:
-            index_names = self.index_data["name"].unique().tolist()
-            if index_names:
-                try:
-                    index_pattern = ",".join(index_names[:500])
-                    response = es.search(
-                        index=index_pattern,
-                        size=0,
-                        allow_no_indices=True,
-                        ignore_unavailable=True,
-                        aggs={
-                            "per_index": {
-                                "terms": {"field": "_index", "size": len(index_names)},
-                                "aggs": {
-                                    "app_value": {
-                                        "terms": {"field": "app", "size": 1}
-                                    }
-                                },
-                            }
-                        },
-                    )
+        def _extract_app(name):
+            parts = name.split("-", 1)  # split into max 2 parts at first dash
+            return parts[1] if len(parts) >= 2 else name
 
-                    app_map = {}
-                    for bucket in (
-                        response.get("aggregations", {})
-                        .get("per_index", {})
-                        .get("buckets", [])
-                    ):
-                        idx_name = bucket["key"]
-                        app_buckets = bucket.get("app_value", {}).get("buckets", [])
-                        if app_buckets:
-                            app_map[idx_name] = app_buckets[0]["key"]
-
-                    if app_map:
-                        self.index_data["app"] = self.index_data["name"].map(app_map)
-                        app_from_es = True
-                        logger.info(
-                            f"Enriched {len(app_map)} indices with 'app' field from ES: "
-                            f"{list(set(app_map.values()))[:10]}"
-                        )
-                except Exception as e:
-                    logger.debug(f"Could not look up 'app' from data indices: {e}")
-
-        # Fallback: parse app from datastream name (second segment after dash)
-        if not app_from_es:
-            self.index_data["app"] = self.index_data["datastream"].apply(
-                self._parse_app_from_name
-            )
-            logger.info(
-                f"Parsed app names from index names: "
-                f"{self.index_data['app'].unique()[:10].tolist()}"
-            )
+        self.index_data["app"] = self.index_data["datastream"].apply(_extract_app)
+        logger.info(
+            f"Extracted app names: "
+            f"{self.index_data['app'].unique()[:10].tolist()}"
+        )
 
     def _get_datastreams_usages(self) -> Iterable:
         if self.index_data.empty:
