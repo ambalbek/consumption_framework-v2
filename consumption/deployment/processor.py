@@ -139,14 +139,35 @@ class DeploymentDataProcessor:
         )
 
         if not self.skip_prices:
-            self.node_data = self.node_data.join(self.cost_data, on="tier")
-
-            # Compute the actual price of the node for the corresponding time chunk
-            self.node_data["cost"] = (
-                self.node_data["price_per_hour_per_gb"]
-                * (self.node_data["memory_limit_bytes"] / 1024 / 1024 / 1024)
-                * self.hour_ratio
+            # Check if nodes have AWS cloud metadata for real pricing
+            has_cloud = (
+                "instance_type" in self.node_data.columns
+                and self.node_data["instance_type"].notna().any()
             )
+
+            if has_cloud:
+                from ..utils.aws_pricing import get_ec2_hourly_price
+
+                logger.info("AWS cloud metadata found, fetching real EC2 pricing")
+                self.node_data["cost"] = self.node_data.apply(
+                    lambda row: (
+                        get_ec2_hourly_price(
+                            row.get("instance_type", ""),
+                            row.get("cloud_region", "us-east-1"),
+                        )
+                        or 0.0
+                    )
+                    * self.hour_ratio,
+                    axis=1,
+                )
+            else:
+                self.node_data = self.node_data.join(self.cost_data, on="tier")
+                # Compute the actual price of the node for the corresponding time chunk
+                self.node_data["cost"] = (
+                    self.node_data["price_per_hour_per_gb"]
+                    * (self.node_data["memory_limit_bytes"] / 1024 / 1024 / 1024)
+                    * self.hour_ratio
+                )
 
             # Compute the cost of each tier
             self.node_data["tier_cost"] = self.node_data.groupby(

@@ -27,12 +27,11 @@ consumption_destination:
   api_key: 'YYYYYYYYYYY'
   cloud_id: 'YYYYYYYYYYY:YYYYYYYYYYY'
 
-# For on-premises deployment, specify cost per 1 GB RAM per hour (in USD).
-# To calibrate for $1400/month total:
-#   1. Find your total cluster RAM in GB (e.g., 512 GB)
-#   2. hot price = $1400 / 720 hours / total_GB = $1400 / 720 / 512 ≈ 0.0038
-#   3. Scale warm/cold/frozen proportionally
-# Example for ~512 GB total hot-tier RAM → $1400/month:
+# For on-premises deployment, set your total monthly infrastructure cost in USD.
+# Costs will be automatically distributed across tiers and nodes.
+# total_monthly_cost_usd: 1400
+
+# Alternatively, specify cost per 1 GB RAM per hour manually:
 # on_prem_costs:
 #   hot: 0.0038
 #   warm: 0.0019

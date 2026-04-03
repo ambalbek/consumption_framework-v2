@@ -12,7 +12,7 @@ from ..utils import (DepDataChecker, ESSBillingClient, ESSResource,
                      MultithreadingEngine)
 from .monitoring_stats_connector import (DEFAULT_MONITORING_INDEX_PATTERN,
                                          DEFAULT_MONITORING_INDEX_PATTERN_V7)
-from .on_prem_costs import get_on_prem_costs
+from .on_prem_costs import get_on_prem_costs, get_costs_from_monthly_total
 from .processor import DeploymentDataProcessor
 
 logger = logging.getLogger(__name__)
@@ -308,10 +308,11 @@ def monitoring_analyzer(
     monitoring_index_pattern: Optional[str] = None,
     parsing_regex_str: Optional[str] = None,
     on_prem_costs_dict: Optional[Dict[str, float]] = None,
+    total_monthly_cost_usd: Optional[float] = None,
 ):
     cost_provider = (
         ESSBillingClientCostsProvider(api_host, billing_api_key, organization_id)
-        if not on_prem_costs_dict
+        if not on_prem_costs_dict and not total_monthly_cost_usd
         else None
     )
 
@@ -356,7 +357,9 @@ def monitoring_analyzer(
                 "elasticsearch_id": elasticsearch_id,
                 "from_ts": from_ts,
                 "price_df": (
-                    get_on_prem_costs(on_prem_costs_dict)
+                    get_costs_from_monthly_total(total_monthly_cost_usd)
+                    if total_monthly_cost_usd
+                    else get_on_prem_costs(on_prem_costs_dict)
                     if on_prem_costs_dict
                     else cost_provider.get_elasticsearch_costs(
                         elasticsearch_id, from_ts

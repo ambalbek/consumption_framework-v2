@@ -427,6 +427,8 @@ class NodeStats(Stats):
                 "elasticsearch.node.stats.os.cgroup.memory.limit.bytes",
                 "elasticsearch.node.stats.fs.total.total_in_bytes",
                 "elasticsearch.node.stats.fs.total.available_in_bytes",
+                "cloud.machine.type",
+                "cloud.region",
             ],
             gauge_fields=[
                 "elasticsearch.node.stats.process.cpu.pct",
@@ -453,6 +455,8 @@ class NodeStats(Stats):
             "elasticsearch.node.stats.os.cgroup.memory.limit.bytes": "memory_limit_bytes",
             "elasticsearch.node.stats.fs.total.total_in_bytes": "fs_total_in_bytes",
             "elasticsearch.node.stats.fs.total.available_in_bytes": "fs_available_in_bytes",
+            "cloud.machine.type": "instance_type",
+            "cloud.region": "cloud_region",
         }
 
         column_mapping.update(
@@ -483,6 +487,12 @@ class NodeStats(Stats):
         # In the future, we'll want to expose all chosen percentiles
         df["cpu_pct"] = df["cpu_pct_50.0"]
 
+        # Add cloud fields with defaults for non-cloud nodes
+        if "instance_type" not in df.columns:
+            df["instance_type"] = None
+        if "cloud_region" not in df.columns:
+            df["cloud_region"] = None
+
         return df[
             [
                 "@timestamp",
@@ -495,6 +505,8 @@ class NodeStats(Stats):
                 "memory_limit_bytes",
                 "fs_total_in_bytes",
                 "fs_available_in_bytes",
+                "instance_type",
+                "cloud_region",
             ]
         ]
 
@@ -807,6 +819,7 @@ class NodeStatsV7(Stats):
                 "node_stats.os.cgroup.memory.limit_in_bytes",
                 "node_stats.fs.total.total_in_bytes",
                 "node_stats.fs.total.available_in_bytes",
+                "source_node.host",
             ],
             gauge_fields=[
                 "node_stats.process.cpu.percent",
@@ -814,7 +827,10 @@ class NodeStatsV7(Stats):
             static_filters=[
                 {"term": {"type": "node_stats"}}
             ],
-            sample_fields=[],
+            sample_fields=[
+                "cloud.machine.type",
+                "cloud.region",
+            ],
             monitoring_index_pattern=monitoring_index_pattern or DEFAULT_MONITORING_INDEX_PATTERN_V7,
             timestamp_field="timestamp",
         )
@@ -854,6 +870,18 @@ class NodeStatsV7(Stats):
         df["memory_limit_bytes"] = df["memory_limit_bytes"].astype("Int64")
         df["cpu_pct"] = df["cpu_pct_50.0"]
 
+        # Extract cloud fields from sample data (nested objects)
+        if "cloud" in df.columns:
+            df["instance_type"] = df["cloud"].apply(
+                lambda x: x.get("machine", {}).get("type") if isinstance(x, dict) else None
+            )
+            df["cloud_region"] = df["cloud"].apply(
+                lambda x: x.get("region") if isinstance(x, dict) else None
+            )
+        else:
+            df["instance_type"] = None
+            df["cloud_region"] = None
+
         return df[
             [
                 "@timestamp",
@@ -866,6 +894,8 @@ class NodeStatsV7(Stats):
                 "memory_limit_bytes",
                 "fs_total_in_bytes",
                 "fs_available_in_bytes",
+                "instance_type",
+                "cloud_region",
             ]
         ]
 
