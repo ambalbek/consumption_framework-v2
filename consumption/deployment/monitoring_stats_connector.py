@@ -429,6 +429,7 @@ class NodeStats(Stats):
                 "elasticsearch.node.stats.fs.total.available_in_bytes",
                 "cloud.machine.type",
                 "cloud.region",
+                "cloud.account.id",
             ],
             gauge_fields=[
                 "elasticsearch.node.stats.process.cpu.pct",
@@ -457,6 +458,7 @@ class NodeStats(Stats):
             "elasticsearch.node.stats.fs.total.available_in_bytes": "fs_available_in_bytes",
             "cloud.machine.type": "instance_type",
             "cloud.region": "cloud_region",
+            "cloud.account.id": "cloud_account_id",
         }
 
         column_mapping.update(
@@ -488,10 +490,9 @@ class NodeStats(Stats):
         df["cpu_pct"] = df["cpu_pct_50.0"]
 
         # Add cloud fields with defaults for non-cloud nodes
-        if "instance_type" not in df.columns:
-            df["instance_type"] = None
-        if "cloud_region" not in df.columns:
-            df["cloud_region"] = None
+        for col in ["instance_type", "cloud_region", "cloud_account_id"]:
+            if col not in df.columns:
+                df[col] = None
 
         return df[
             [
@@ -501,12 +502,13 @@ class NodeStats(Stats):
                 "cores",
                 "cpu_throttled_count_delta",
                 "cpu_throttled_seconds_delta",
-                "cpu_pct",  # TODO: expose all percentiles
+                "cpu_pct",
                 "memory_limit_bytes",
                 "fs_total_in_bytes",
                 "fs_available_in_bytes",
                 "instance_type",
                 "cloud_region",
+                "cloud_account_id",
             ]
         ]
 

@@ -148,12 +148,24 @@ class DeploymentDataProcessor:
             if has_cloud:
                 from ..utils.aws_pricing import get_ec2_hourly_price
 
-                logger.info("AWS cloud metadata found, fetching real EC2 pricing")
+                # Get account ID from first node with cloud data
+                account_id = (
+                    self.node_data.loc[
+                        self.node_data["instance_type"].notna(), "cloud_account_id"
+                    ].iloc[0]
+                    if "cloud_account_id" in self.node_data.columns
+                    else None
+                )
+                logger.info(
+                    f"AWS cloud metadata found (account={account_id}), "
+                    f"fetching real EC2 pricing"
+                )
                 self.node_data["cost"] = self.node_data.apply(
                     lambda row: (
                         get_ec2_hourly_price(
                             row.get("instance_type", ""),
                             row.get("cloud_region", "us-east-1"),
+                            account_id=account_id,
                         )
                         or 0.0
                     )
