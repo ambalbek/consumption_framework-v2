@@ -187,6 +187,9 @@ class DeploymentDataProcessor:
             )
             return
 
+        # Look up 'app' field from actual data indices
+        self._enrich_app_field(es)
+
         # Enrich index data with tier info from shard data
         shard_range_flt = range_filter(
             self.from_ts - timedelta(seconds=5 * self.chunk_size_seconds),
@@ -241,6 +244,59 @@ class DeploymentDataProcessor:
             how="left",
             suffixes=(None, ""),
         )
+
+    def _enrich_app_field(self, es):
+        """
+        Look up the 'app' field from actual data indices and add it to index_data.
+        Queries each unique index for its top 'app' field value.
+        """
+        if "name" not in self.index_data.columns:
+            return
+
+        index_names = self.index_data["name"].unique().tolist()
+        if not index_names:
+            return
+
+        # Batch lookup: get app value per index in one query
+        try:
+            # Use a comma-separated list of index names
+            index_pattern = ",".join(index_names[:500])  # cap to avoid URL too long
+            response = es.search(
+                index=index_pattern,
+                size=0,
+                allow_no_indices=True,
+                ignore_unavailable=True,
+                aggs={
+                    "per_index": {
+                        "terms": {"field": "_index", "size": len(index_names)},
+                        "aggs": {
+                            "app_value": {
+                                "terms": {"field": "app", "size": 1}
+                            }
+                        },
+                    }
+                },
+            )
+
+            app_map = {}
+            for bucket in (
+                response.get("aggregations", {})
+                .get("per_index", {})
+                .get("buckets", [])
+            ):
+                idx_name = bucket["key"]
+                app_buckets = bucket.get("app_value", {}).get("buckets", [])
+                if app_buckets:
+                    app_map[idx_name] = app_buckets[0]["key"]
+
+            if app_map:
+                self.index_data["app"] = self.index_data["name"].map(app_map)
+                logger.info(f"Enriched {len(app_map)} indices with 'app' field")
+            else:
+                logger.debug("No 'app' field found in data indices")
+
+        except Exception as e:
+            logger.warning(f"Failed to look up 'app' field from data indices: {e}")
 
     def _get_datastreams_usages(self) -> Iterable:
         if self.index_data.empty:
@@ -319,6 +375,19 @@ class DeploymentDataProcessor:
         )
 
         datastream_usages["dataset"] = "datastream_usage"
+        # app field from index_data lookup
+        if "app" in self.index_data.columns:
+            app_map = (
+                self.index_data[["datastream", "app"]]
+                .dropna(subset=["app"])
+                .drop_duplicates(subset=["datastream"])
+                .set_index("datastream")["app"]
+            )
+            ds_names = datastream_usages.index.get_level_values("datastream") if "datastream" in datastream_usages.index.names else datastream_usages.get("datastream", pd.Series())
+            datastream_usages["app"] = ds_names.map(app_map).fillna(ds_names).values
+        else:
+            ds_names = datastream_usages.index.get_level_values("datastream") if "datastream" in datastream_usages.index.names else datastream_usages.get("datastream", "")
+            datastream_usages["app"] = ds_names.values if hasattr(ds_names, 'values') else ds_names
 
         return list(datastream_usages.reset_index().itertuples(index=False))
 
@@ -408,6 +477,18 @@ class DeploymentDataProcessor:
         )
 
         datastreams["dataset"] = "datastream"
+
+        # app field comes from index_data (looked up from actual data indices)
+        if "app" in self.index_data.columns:
+            app_map = (
+                self.index_data[["datastream", "app"]]
+                .dropna(subset=["app"])
+                .drop_duplicates(subset=["datastream"])
+                .set_index("datastream")["app"]
+            )
+            datastreams["app"] = datastreams["datastream"].map(app_map).fillna(datastreams["datastream"])
+        else:
+            datastreams["app"] = datastreams["datastream"]
 
         return list(datastreams.reset_index().itertuples(index=False))
 

@@ -368,7 +368,9 @@ def monitoring_analyzer(
                 "elasticsearch_id": elasticsearch_id,
                 "from_ts": from_ts,
                 "price_df": (
-                    get_costs_from_monthly_total(total_monthly_cost_usd)
+                    pd.DataFrame()
+                    if daily_cost_usd
+                    else get_costs_from_monthly_total(total_monthly_cost_usd)
                     if total_monthly_cost_usd
                     else get_on_prem_costs(on_prem_costs_dict)
                     if on_prem_costs_dict

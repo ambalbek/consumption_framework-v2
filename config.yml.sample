@@ -53,6 +53,14 @@ consumption_destination:
 # monitoring indices are queried. Setting a custom pattern disables V7 auto-detection.
 # monitoring_index_pattern: '.monitoring-es-8-*,.monitoring-es-9-*'
 
+# Extract app name from datastream/index name. Group 1 = app name.
+# Examples:
+#   '^([^-]+)'          → "foo-logs-2024.01" becomes app "foo"
+#   '^(.+?)[-_]logs'    → "myapp-logs-nginx" becomes app "myapp"
+#   '^(.+?)[-_](logs|metrics|events)' → "payment-service-logs" becomes app "payment-service"
+# If not set, app = full datastream name.
+# app_regex_str: '^([^-]+)'
+
 # Uncomment and modify this for Federal customers using a non-standard ESS endpoint
 # api_host: 'api.elastic-cloud.com'
 

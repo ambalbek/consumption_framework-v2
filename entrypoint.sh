@@ -3,7 +3,7 @@ set -e
 set -x
 
 # If the command isn't "init", "get-billing-data", or "consume-monitoring", we assume the user wants to run a custom command.
-if [ "$1" != "init" ] && [ "$1" != "get-billing-data" ] && [ "$1" != "consume-monitoring" ] && [ "$1" != "--help" ]; then
+if [ "$1" != "init" ] && [ "$1" != "get-billing-data" ] && [ "$1" != "consume-monitoring" ] && [ "$1" != "diagnose" ] && [ "$1" != "--help" ]; then
   exec "$@"
   exit $?
 fi

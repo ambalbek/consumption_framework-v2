@@ -2,7 +2,7 @@
 
 A set of tools to help Elasticsearch users understand the consumption patterns of their deployments — resource allocation, ingest patterns, cost attribution, and growth planning — surfaced through Kibana dashboards.
 
-**Supported Elasticsearch versions:** 8.x and 9.x
+**Supported Elasticsearch versions:** 7.x (internal monitoring), 8.x and 9.x (metricbeat)
 
 ---
 
@@ -86,6 +86,7 @@ Processes monitoring data across 10-minute chunks and enriches index-level metri
 | Stack monitoring enabled | Internal collection must be active on source clusters |
 | API keys | See [Permissions](#permissions) |
 | Python 3.11+ **or** Docker | For running the framework |
+| AWS credentials (optional) | For fetching real costs from AWS Cost Explorer |
 
 ---
 
@@ -117,7 +118,7 @@ consumption_destination:
   api_key: 'DESTINATION_API_KEY'
 ```
 
-Minimal config (on-premises):
+Minimal config (on-premises / self-managed AWS):
 
 ```yaml
 organization_name: "My Org"
@@ -133,11 +134,27 @@ consumption_destination:
   hosts: 'https://destination-cluster:9200'
   api_key: 'DESTINATION_API_KEY'
 
-on_prem_costs:
-  hot: 1.0
-  warm: 0.5
-  cold: 0.25
-  frozen: 0.1
+# If monitoring uses V7 internal collection + V8 metricbeat together:
+monitoring_index_pattern: '.monitoring*'
+
+# Option 1: Fetch real costs from AWS (includes RI/savings plan discounts)
+aws_cost_explorer:
+  aws_access_key_id: 'AKIAXXXXXXXX'
+  aws_secret_access_key: 'XXXXXXXX'
+  region: 'us-east-1'
+  tag_key: 'Application Name'
+  tag_values:
+    - 'ELMS - Enterprise Logging and Monitoring System'
+    - 'elms'
+  min_daily_cost: 500
+  fallback_daily_cost: 887
+
+# Option 2: Static cost per GB RAM/hour per tier
+# on_prem_costs:
+#   hot: 1.0
+#   warm: 0.5
+#   cold: 0.25
+#   frozen: 0.1
 ```
 
 ---
@@ -326,7 +343,8 @@ docker compose run --rm consumption-billing
 | `monitoring_source` | Yes | Elasticsearch client params for the monitoring cluster |
 | `consumption_destination` | Yes | Elasticsearch client params for the destination cluster |
 | `on_prem_costs` | On-prem only | Cost per GB RAM/hour per tier (mutually exclusive with `billing_api_key`) |
-| `monitoring_index_pattern` | No | Override default `.monitoring-es-8-*,.monitoring-es-9-*` (useful for CCS) |
+| `aws_cost_explorer` | No | Fetch real daily costs from AWS Cost Explorer (see config sample) |
+| `monitoring_index_pattern` | No | Override default `.monitoring-es-8-*,.monitoring-es-9-*` (e.g., `.monitoring*` for mixed V7+V8) |
 | `parsing_regex_str` | No | Custom regex for parsing datastream names from index names |
 | `api_host` | No | Override ESS API endpoint (default: `api.elastic-cloud.com`) |
 
@@ -383,6 +401,14 @@ python main.py consume-monitoring --config-file config.yml \
   [--debug]
 ```
 
+### `diagnose`
+
+Checks what monitoring data is available in both V7 and V8 formats. Run this first to verify connectivity and data availability.
+
+```bash
+python main.py diagnose --config-file config.yml
+```
+
 ### `get-billing-data`
 
 Fetches org-level billing data from the ESS API. ESS deployments only.
@@ -400,7 +426,7 @@ python main.py get-billing-data --config-file config.yml \
 
 ### Source cluster (`monitoring_source`)
 
-The API key needs `read` access to `.monitoring-es-8-*` and `.monitoring-es-9-*`:
+The API key needs `read` access to monitoring indices:
 
 <details>
 <summary>Create source API key (Dev Tools)</summary>
@@ -413,7 +439,7 @@ POST /_security/api_key
     "consumption_framework": {
       "indices": [
         {
-          "names": [".monitoring-es-8-*", ".monitoring-es-9-*"],
+          "names": [".monitoring-es-7-*", ".monitoring-es-8-*", ".monitoring-es-9-*"],
           "privileges": ["read"]
         }
       ]
@@ -423,6 +449,18 @@ POST /_security/api_key
 ```
 
 </details>
+
+### AWS Cost Explorer (optional)
+
+If using `aws_cost_explorer` config, the AWS IAM user/role needs:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["ce:GetCostAndUsage", "ec2:DescribeInstances"],
+  "Resource": "*"
+}
+```
 
 ### Destination cluster (`consumption_destination`)
 
@@ -486,16 +524,24 @@ Upgrade to the latest version of this framework — this was a pagination bug fi
 
 ### No data in dashboards after running
 
-1. Confirm `init` was run on the destination cluster.
-2. Check that stack monitoring is enabled and `.monitoring-es-8-*` (or `.monitoring-es-9-*`) indices exist on the source cluster and contain recent data.
-3. Run with `--debug` to see detailed query logs.
-4. Verify API key permissions on both clusters.
+1. Run `python main.py diagnose --config-file config.yml` to verify data availability.
+2. Confirm `init` was run on the destination cluster.
+3. Check that monitoring indices (`.monitoring-es-7-*` or `.monitoring-es-8-*`) exist on the source cluster.
+4. Run with `--debug` to see detailed query logs.
+5. Verify API key permissions on both clusters.
 
 ### Script runs but produces 0 documents
 
-- The source cluster may have no monitoring data in the requested `--lookbehind` window.
+- Run `diagnose` to check what monitoring data is available.
+- If V7 data exists but V8 doesn't, ensure `monitoring_index_pattern` is set to `.monitoring*` or `.monitoring-es-7-*`.
 - The source API key may lack `read` on `.monitoring-es-*`.
 - Re-run with `--force` if data exists but was already processed.
+
+### Costs show as 0
+
+- If using `aws_cost_explorer`: check AWS credentials and IAM permissions.
+- If using `on_prem_costs`: verify values are set in config.yml.
+- Run with `--debug` and look for "AWS Cost Explorer" or "cost" log messages.
 
 ### SSL / certificate errors
 
