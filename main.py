@@ -110,6 +110,60 @@ def cli():
     pass
 
 
+@cli.command("diagnose", help="Check what monitoring data is available")
+@with_click_options
+def diagnose(config, vpn, lookbehind, threads, force):
+    from consumption.utils import ElasticsearchClient
+
+    es = ElasticsearchClient(**config["monitoring_source"])
+    monitoring_pattern = config.get("monitoring_index_pattern")
+
+    print("\n=== MONITORING DATA DIAGNOSTIC ===\n")
+
+    # Check V8 indices
+    for pattern, label in [
+        (monitoring_pattern or ".monitoring-es-8-*,.monitoring-es-9-*", "V8/V9"),
+        (".monitoring-es-7-*", "V7"),
+    ]:
+        if monitoring_pattern and label == "V7":
+            print(f"[{label}] Skipped (custom monitoring_index_pattern set)\n")
+            continue
+
+        print(f"[{label}] Index pattern: {pattern}")
+        try:
+            res = es.search(
+                index=pattern, size=0,
+                allow_no_indices=True,
+                expand_wildcards=["open", "hidden"],
+                aggs={
+                    "event_datasets": {"terms": {"field": "event.dataset", "size": 50}},
+                    "doc_types": {"terms": {"field": "type", "size": 50}},
+                    "has_index_name": {"filter": {"exists": {"field": "elasticsearch.index.name"}}},
+                    "has_cluster_uuid": {"filter": {"exists": {"field": "cluster_uuid"}}},
+                    "ts_field": {"filter": {"exists": {"field": "timestamp"}}},
+                    "at_ts_field": {"filter": {"exists": {"field": "@timestamp"}}},
+                },
+            )
+            total = res["hits"]["total"]
+            total_docs = total["value"] if isinstance(total, dict) else total
+            print(f"  Total docs: {total_docs}")
+
+            for bucket in res["aggregations"]["event_datasets"].get("buckets", []):
+                print(f"  event.dataset: {bucket['key']} ({bucket['doc_count']} docs)")
+            for bucket in res["aggregations"]["doc_types"].get("buckets", []):
+                print(f"  type: {bucket['key']} ({bucket['doc_count']} docs)")
+
+            print(f"  Docs with elasticsearch.index.name: {res['aggregations']['has_index_name']['doc_count']}")
+            print(f"  Docs with cluster_uuid: {res['aggregations']['has_cluster_uuid']['doc_count']}")
+            print(f"  Docs with 'timestamp' field: {res['aggregations']['ts_field']['doc_count']}")
+            print(f"  Docs with '@timestamp' field: {res['aggregations']['at_ts_field']['doc_count']}")
+        except Exception as e:
+            print(f"  Error: {e}")
+        print()
+
+    print("=== END DIAGNOSTIC ===\n")
+
+
 @cli.command("init", help="Initialize the target cluster")
 @with_click_options
 def init(config, vpn, *args, **kwargs):
