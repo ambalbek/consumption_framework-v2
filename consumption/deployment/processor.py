@@ -54,7 +54,9 @@ class DeploymentDataProcessor:
         self.monitoring_version = monitoring_version
 
         # Select the appropriate Stats classes for V7 or V8
-        if monitoring_version == "7":
+        # "7@" means V7 indices but using @timestamp field
+        is_v7 = monitoring_version.startswith("7")
+        if is_v7:
             index_stats_cls = IndexStatsV7
             cluster_stats_cls = ClusterStatsV7
             node_stats_cls = NodeStatsV7
@@ -65,8 +67,8 @@ class DeploymentDataProcessor:
             node_stats_cls = NodeStats
             shard_stats_cls = ShardStats
 
-        id_filter = elasticsearch_id_filter(self.elasticsearch_id, monitoring_version)
-        ts_field = "timestamp" if monitoring_version == "7" else "@timestamp"
+        id_filter = elasticsearch_id_filter(self.elasticsearch_id, "7" if is_v7 else "8")
+        ts_field = "@timestamp" if monitoring_version == "7@" else ("timestamp" if is_v7 else "@timestamp")
 
         self.cost_data = price_df
         self.skip_prices = self.cost_data.empty
@@ -77,20 +79,22 @@ class DeploymentDataProcessor:
                 f"cost computation will be skipped"
             )
 
-        # TODO: search index_data, node_data and shard_data in parallel
-        self.index_data = index_stats_cls(
-            es, monitoring_index_pattern, parsing_regex_str
-        ).search_as_dataframe(
-            [
-                # Shift 1 chunk forward to avoid missing data
-                range_filter(
-                    self.from_ts - timedelta(seconds=self.chunk_size_seconds),
-                    self.to_ts,
-                    ts_field,
-                ),
-                id_filter,
-            ],
+        # Helper: create Stats object with correct timestamp_field
+        def _make_stats(cls, *args):
+            obj = cls(*args)
+            obj.timestamp_field = ts_field
+            return obj
+
+        range_flt = range_filter(
+            self.from_ts - timedelta(seconds=self.chunk_size_seconds),
+            self.to_ts,
+            ts_field,
         )
+
+        # TODO: search index_data, node_data and shard_data in parallel
+        self.index_data = _make_stats(
+            index_stats_cls, es, monitoring_index_pattern, parsing_regex_str
+        ).search_as_dataframe([range_flt, id_filter])
 
         # If there's no data, we stop here
         if self.index_data.empty:
@@ -102,34 +106,14 @@ class DeploymentDataProcessor:
             return
 
         # TODO: run in parallel
-        self.cluster_data = cluster_stats_cls(
-            es, monitoring_index_pattern
-        ).search_as_dataframe(
-            [
-                # Shift 1 chunk forward to avoid missing data
-                range_filter(
-                    self.from_ts - timedelta(seconds=self.chunk_size_seconds),
-                    self.to_ts,
-                    ts_field,
-                ),
-                id_filter,
-            ],
-        )
+        self.cluster_data = _make_stats(
+            cluster_stats_cls, es, monitoring_index_pattern
+        ).search_as_dataframe([range_flt, id_filter])
 
         # TODO: search index_data, node_data and shard_data in parallel
         self.node_data = (
-            node_stats_cls(es, monitoring_index_pattern)
-            .search_as_dataframe(
-                [
-                    # Shift 1 chunk forward to avoid missing data
-                    range_filter(
-                        self.from_ts - timedelta(seconds=self.chunk_size_seconds),
-                        self.to_ts,
-                        ts_field,
-                    ),
-                    id_filter,
-                ],
-            )
+            _make_stats(node_stats_cls, es, monitoring_index_pattern)
+            .search_as_dataframe([range_flt, id_filter])
             .merge(
                 self.cluster_data,
                 left_on=["@timestamp", "id"],
@@ -158,19 +142,14 @@ class DeploymentDataProcessor:
             self.node_data["tier_cost"] = None
 
         # TODO: perform data fetches in parallel
+        shard_range_flt = range_filter(
+            self.from_ts - timedelta(seconds=5 * self.chunk_size_seconds),
+            self.to_ts,
+            ts_field,
+        )
         shard_data = (
-            shard_stats_cls(es, monitoring_index_pattern).search_as_dataframe(
-                [
-                    # For shard data we need to go back even further to ensure
-                    # we can properly identify the node where the data lives.
-                    range_filter(
-                        self.from_ts - timedelta(seconds=5 * self.chunk_size_seconds),
-                        self.to_ts,
-                        ts_field,
-                    ),
-                    id_filter,
-                ],
-            )
+            _make_stats(shard_stats_cls, es, monitoring_index_pattern)
+            .search_as_dataframe([shard_range_flt, id_filter])
             # Join with node_data to add the tier information
             .join(
                 self.node_data[

@@ -271,16 +271,40 @@ def _iter_source_walks(
 
     # V7 source walk (only if no custom pattern was provided)
     if not monitoring_index_pattern:
-        for from_ts, elasticsearch_id in _source_walk(
-            source_es,
-            DEFAULT_MONITORING_INDEX_PATTERN_V7,
-            range_start,
-            range_end,
-            timestamp_field="timestamp",
-            cluster_id_field="cluster_uuid",
-            dataset_filter={"term": {"type": "cluster_stats"}},
-        ):
-            yield from_ts, elasticsearch_id, "7"
+        v7_found = False
+
+        # Try V7 internal monitoring: timestamp field, cluster_uuid, type filter
+        try:
+            for from_ts, elasticsearch_id in _source_walk(
+                source_es,
+                DEFAULT_MONITORING_INDEX_PATTERN_V7,
+                range_start,
+                range_end,
+                timestamp_field="timestamp",
+                cluster_id_field="cluster_uuid",
+                dataset_filter={"exists": {"field": "cluster_uuid"}},
+            ):
+                v7_found = True
+                yield from_ts, elasticsearch_id, "7"
+        except Exception as e:
+            logger.warning(f"V7 source walk with 'timestamp' failed: {e}")
+
+        # Fallback: V7 indices might use @timestamp instead
+        if not v7_found:
+            logger.debug("V7 source walk with 'timestamp' found nothing, trying '@timestamp'")
+            try:
+                for from_ts, elasticsearch_id in _source_walk(
+                    source_es,
+                    DEFAULT_MONITORING_INDEX_PATTERN_V7,
+                    range_start,
+                    range_end,
+                    timestamp_field="@timestamp",
+                    cluster_id_field="cluster_uuid",
+                    dataset_filter={"exists": {"field": "cluster_uuid"}},
+                ):
+                    yield from_ts, elasticsearch_id, "7@"
+            except Exception as e:
+                logger.warning(f"V7 source walk with '@timestamp' failed: {e}")
 
 
 def monitoring_analyzer(
