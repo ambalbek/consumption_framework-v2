@@ -138,6 +138,14 @@ class DeploymentDataProcessor:
             .dropna(subset=["tier"])  # No tier information => not a data node (we drop)
         )
 
+        # Cap memory_limit_bytes: when cgroup has no limit, ES reports max int64
+        # which makes any per-GB calculation produce absurd numbers
+        MAX_MEMORY_BYTES = 2 * 1024 * 1024 * 1024 * 1024  # 2 TB cap
+        self.node_data.loc[
+            self.node_data["memory_limit_bytes"] > MAX_MEMORY_BYTES,
+            "memory_limit_bytes",
+        ] = None
+
         if not self.skip_prices:
             # Check if nodes have AWS cloud metadata for real pricing
             has_cloud = (
@@ -160,6 +168,7 @@ class DeploymentDataProcessor:
                     f"AWS cloud metadata found (account={account_id}), "
                     f"fetching real EC2 pricing"
                 )
+                # EC2 price is per-instance, NOT per-GB — already includes full instance cost
                 self.node_data["cost"] = self.node_data.apply(
                     lambda row: (
                         get_ec2_hourly_price(
@@ -174,11 +183,12 @@ class DeploymentDataProcessor:
                 )
             else:
                 self.node_data = self.node_data.join(self.cost_data, on="tier")
-                # Compute the actual price of the node for the corresponding time chunk
+
+                # For nodes without memory info, estimate from cost_data
+                # Avoid multiplying by None or absurd values
+                mem_gb = self.node_data["memory_limit_bytes"].fillna(0) / 1024 / 1024 / 1024
                 self.node_data["cost"] = (
-                    self.node_data["price_per_hour_per_gb"]
-                    * (self.node_data["memory_limit_bytes"] / 1024 / 1024 / 1024)
-                    * self.hour_ratio
+                    self.node_data["price_per_hour_per_gb"] * mem_gb * self.hour_ratio
                 )
 
             # Compute the cost of each tier
