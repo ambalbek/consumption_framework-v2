@@ -259,52 +259,32 @@ def _iter_source_walks(
     Yields (from_ts, elasticsearch_id, monitoring_version) tuples
     from both V8 and V7 monitoring indices.
 
-    If a custom monitoring_index_pattern is provided, only V8 is used.
-    Otherwise, both V8 and V7 default patterns are tried.
+    Both V8 and V7 source walks are always tried.
+    Custom monitoring_index_pattern is used for both when provided.
     """
-    # V8/V9 source walk
     v8_index = monitoring_index_pattern or DEFAULT_MONITORING_INDEX_PATTERN
+    v7_index = monitoring_index_pattern or DEFAULT_MONITORING_INDEX_PATTERN_V7
+
+    # V8/V9 source walk (metricbeat format: @timestamp, elasticsearch.cluster.name)
     for from_ts, elasticsearch_id in _source_walk(
         source_es, v8_index, range_start, range_end,
     ):
         yield from_ts, elasticsearch_id, "8"
 
-    # V7 source walk (only if no custom pattern was provided)
-    if not monitoring_index_pattern:
-        v7_found = False
-
-        # Try V7 internal monitoring: timestamp field, cluster_uuid, type filter
-        try:
-            for from_ts, elasticsearch_id in _source_walk(
-                source_es,
-                DEFAULT_MONITORING_INDEX_PATTERN_V7,
-                range_start,
-                range_end,
-                timestamp_field="timestamp",
-                cluster_id_field="cluster_uuid",
-                dataset_filter={"exists": {"field": "cluster_uuid"}},
-            ):
-                v7_found = True
-                yield from_ts, elasticsearch_id, "7"
-        except Exception as e:
-            logger.warning(f"V7 source walk with 'timestamp' failed: {e}")
-
-        # Fallback: V7 indices might use @timestamp instead
-        if not v7_found:
-            logger.debug("V7 source walk with 'timestamp' found nothing, trying '@timestamp'")
-            try:
-                for from_ts, elasticsearch_id in _source_walk(
-                    source_es,
-                    DEFAULT_MONITORING_INDEX_PATTERN_V7,
-                    range_start,
-                    range_end,
-                    timestamp_field="@timestamp",
-                    cluster_id_field="cluster_uuid",
-                    dataset_filter={"exists": {"field": "cluster_uuid"}},
-                ):
-                    yield from_ts, elasticsearch_id, "7@"
-            except Exception as e:
-                logger.warning(f"V7 source walk with '@timestamp' failed: {e}")
+    # V7 source walk (internal monitoring format: timestamp, cluster_uuid)
+    try:
+        for from_ts, elasticsearch_id in _source_walk(
+            source_es,
+            v7_index,
+            range_start,
+            range_end,
+            timestamp_field="timestamp",
+            cluster_id_field="cluster_uuid",
+            dataset_filter={"term": {"type": "cluster_stats"}},
+        ):
+            yield from_ts, elasticsearch_id, "7"
+    except Exception as e:
+        logger.warning(f"V7 source walk failed: {e}")
 
 
 def monitoring_analyzer(
