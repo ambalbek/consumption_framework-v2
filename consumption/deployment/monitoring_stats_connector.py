@@ -321,7 +321,13 @@ class Stats(ABC):
         self,
         filters: List[Dict[str, Any]] = [],
     ):
-        return pd.DataFrame(self.search(filters))
+        try:
+            return pd.DataFrame(self.search(filters))
+        except NoResultsError:
+            logger.warning(
+                f"No results for {self.__class__.__name__}, returning empty DataFrame"
+            )
+            return pd.DataFrame()
 
 
 class ClusterStats(Stats):
@@ -518,7 +524,10 @@ class IndexStats(Stats):
             ],
             gauge_fields=[],
             static_filters=[
-                {"term": {"event.dataset": {"value": "elasticsearch.index"}}},
+                {"bool": {"should": [
+                    {"term": {"event.dataset": {"value": "elasticsearch.index"}}},
+                    {"term": {"event.dataset": {"value": "elasticsearch.index_summary"}}},
+                ], "minimum_should_match": 1}},
             ],
             sample_fields=[],
             monitoring_index_pattern=monitoring_index_pattern,
