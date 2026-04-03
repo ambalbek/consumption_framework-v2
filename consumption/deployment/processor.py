@@ -245,59 +245,81 @@ class DeploymentDataProcessor:
             suffixes=(None, ""),
         )
 
+    @staticmethod
+    def _parse_app_from_name(name: str) -> str:
+        """
+        Extract app name from index/datastream name pattern: foo*-appname-*
+        Takes the second segment (split by dash).
+        E.g., "foobar-payments" → "payments", "foo1-auth" → "auth"
+        """
+        parts = name.split("-")
+        if len(parts) >= 2:
+            return parts[1]
+        return name
+
     def _enrich_app_field(self, es):
         """
-        Look up the top-level 'app' field from actual data indices.
-        Queries each unique index for its 'app' field value.
+        Add 'app' field to index_data.
+        1. Try looking up 'app' field from actual data indices
+        2. Fall back to parsing from index name (second segment: foo*-appname-*)
         """
-        if "name" not in self.index_data.columns:
+        if "datastream" not in self.index_data.columns:
             return
 
-        index_names = self.index_data["name"].unique().tolist()
-        if not index_names:
-            return
-
-        try:
-            index_pattern = ",".join(index_names[:500])
-            response = es.search(
-                index=index_pattern,
-                size=0,
-                allow_no_indices=True,
-                ignore_unavailable=True,
-                aggs={
-                    "per_index": {
-                        "terms": {"field": "_index", "size": len(index_names)},
-                        "aggs": {
-                            "app_value": {
-                                "terms": {"field": "app", "size": 1}
+        # Try querying data indices for 'app' field
+        app_from_es = False
+        if "name" in self.index_data.columns:
+            index_names = self.index_data["name"].unique().tolist()
+            if index_names:
+                try:
+                    index_pattern = ",".join(index_names[:500])
+                    response = es.search(
+                        index=index_pattern,
+                        size=0,
+                        allow_no_indices=True,
+                        ignore_unavailable=True,
+                        aggs={
+                            "per_index": {
+                                "terms": {"field": "_index", "size": len(index_names)},
+                                "aggs": {
+                                    "app_value": {
+                                        "terms": {"field": "app", "size": 1}
+                                    }
+                                },
                             }
                         },
-                    }
-                },
+                    )
+
+                    app_map = {}
+                    for bucket in (
+                        response.get("aggregations", {})
+                        .get("per_index", {})
+                        .get("buckets", [])
+                    ):
+                        idx_name = bucket["key"]
+                        app_buckets = bucket.get("app_value", {}).get("buckets", [])
+                        if app_buckets:
+                            app_map[idx_name] = app_buckets[0]["key"]
+
+                    if app_map:
+                        self.index_data["app"] = self.index_data["name"].map(app_map)
+                        app_from_es = True
+                        logger.info(
+                            f"Enriched {len(app_map)} indices with 'app' field from ES: "
+                            f"{list(set(app_map.values()))[:10]}"
+                        )
+                except Exception as e:
+                    logger.debug(f"Could not look up 'app' from data indices: {e}")
+
+        # Fallback: parse app from datastream name (second segment after dash)
+        if not app_from_es:
+            self.index_data["app"] = self.index_data["datastream"].apply(
+                self._parse_app_from_name
             )
-
-            app_map = {}
-            for bucket in (
-                response.get("aggregations", {})
-                .get("per_index", {})
-                .get("buckets", [])
-            ):
-                idx_name = bucket["key"]
-                app_buckets = bucket.get("app_value", {}).get("buckets", [])
-                if app_buckets:
-                    app_map[idx_name] = app_buckets[0]["key"]
-
-            if app_map:
-                self.index_data["app"] = self.index_data["name"].map(app_map)
-                logger.info(
-                    f"Enriched {len(app_map)} indices with 'app' field: "
-                    f"{list(set(app_map.values()))[:10]}"
-                )
-            else:
-                logger.warning("No 'app' field found in data indices")
-
-        except Exception as e:
-            logger.warning(f"Failed to look up 'app' field from data indices: {e}")
+            logger.info(
+                f"Parsed app names from index names: "
+                f"{self.index_data['app'].unique()[:10].tolist()}"
+            )
 
     def _get_datastreams_usages(self) -> Iterable:
         if self.index_data.empty:
@@ -341,7 +363,8 @@ class DeploymentDataProcessor:
             datastream_usages, "total_store_size_in_bytes", group
         )
 
-        if not self.skip_prices:
+        has_costs = not self.skip_prices or "tier_cost" in datastream_usages.columns and datastream_usages["tier_cost"].notna().any()
+        if has_costs:
             logger.debug(
                 f"Computing datastream usages costs for {self.elasticsearch_id} "
                 f"at {self.from_ts.strftime('%Y-%m-%d %H:%M:%S')}"
@@ -440,7 +463,8 @@ class DeploymentDataProcessor:
             datastreams, "total_store_size_in_bytes", group
         )
 
-        if not self.skip_prices:
+        has_costs = not self.skip_prices or "tier_cost" in datastreams.columns and datastreams["tier_cost"].notna().any()
+        if has_costs:
             logger.debug(
                 f"Computing datastreams costs for {self.elasticsearch_id} "
                 f"at {self.from_ts.strftime('%Y-%m-%d %H:%M:%S')}"
