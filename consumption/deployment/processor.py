@@ -91,29 +91,36 @@ class DeploymentDataProcessor:
             ts_field,
         )
 
-        # TODO: search index_data, node_data and shard_data in parallel
-        self.index_data = _make_stats(
-            index_stats_cls, es, monitoring_index_pattern, parsing_regex_str
-        ).search_as_dataframe([range_flt, id_filter])
-
-        # If there's no data, we stop here
-        if self.index_data.empty:
-            logger.error(
-                f"No index data found for {self.elasticsearch_id} "
-                f"at {self.from_ts.strftime('%Y-%m-%d %H:%M:%S')}, "
-                f"skipping further processing"
-            )
-            return
-
-        # TODO: run in parallel
+        # Fetch cluster data first — needed for node tier mapping
         self.cluster_data = _make_stats(
             cluster_stats_cls, es, monitoring_index_pattern
         ).search_as_dataframe([range_flt, id_filter])
 
-        # TODO: search index_data, node_data and shard_data in parallel
+        if self.cluster_data.empty:
+            logger.warning(
+                f"No cluster data found for {self.elasticsearch_id} "
+                f"at {self.from_ts.strftime('%Y-%m-%d %H:%M:%S')}, "
+                f"skipping further processing"
+            )
+            self.index_data = pd.DataFrame()
+            return
+
+        # Fetch node data and merge with cluster data for tier info
+        node_df = _make_stats(node_stats_cls, es, monitoring_index_pattern).search_as_dataframe(
+            [range_flt, id_filter]
+        )
+
+        if node_df.empty:
+            logger.warning(
+                f"No node data found for {self.elasticsearch_id} "
+                f"at {self.from_ts.strftime('%Y-%m-%d %H:%M:%S')}, "
+                f"skipping further processing"
+            )
+            self.index_data = pd.DataFrame()
+            return
+
         self.node_data = (
-            _make_stats(node_stats_cls, es, monitoring_index_pattern)
-            .search_as_dataframe([range_flt, id_filter])
+            node_df
             .merge(
                 self.cluster_data,
                 left_on=["@timestamp", "id"],
@@ -141,7 +148,20 @@ class DeploymentDataProcessor:
         else:
             self.node_data["tier_cost"] = None
 
-        # TODO: perform data fetches in parallel
+        # Fetch index data (may be empty if index metricset not collected)
+        self.index_data = _make_stats(
+            index_stats_cls, es, monitoring_index_pattern, parsing_regex_str
+        ).search_as_dataframe([range_flt, id_filter])
+
+        if self.index_data.empty:
+            logger.warning(
+                f"No index data found for {self.elasticsearch_id} "
+                f"at {self.from_ts.strftime('%Y-%m-%d %H:%M:%S')}, "
+                f"node data will still be produced"
+            )
+            return
+
+        # Enrich index data with tier info from shard data
         shard_range_flt = range_filter(
             self.from_ts - timedelta(seconds=5 * self.chunk_size_seconds),
             self.to_ts,
@@ -150,21 +170,28 @@ class DeploymentDataProcessor:
         shard_data = (
             _make_stats(shard_stats_cls, es, monitoring_index_pattern)
             .search_as_dataframe([shard_range_flt, id_filter])
-            # Join with node_data to add the tier information
-            .join(
-                self.node_data[
-                    [
-                        "id",
-                        "tier",
-                        "deployment_name",
-                        "elasticsearch_id",
-                        "tier_cost",
-                    ]
-                ]
-                .drop_duplicates()
-                .set_index("id"),
-                on="node_uuid",
+        )
+
+        if shard_data.empty:
+            logger.warning(
+                f"No shard data found for {self.elasticsearch_id}, "
+                f"skipping index-tier enrichment"
             )
+            return
+
+        shard_data = shard_data.join(
+            self.node_data[
+                [
+                    "id",
+                    "tier",
+                    "deployment_name",
+                    "elasticsearch_id",
+                    "tier_cost",
+                ]
+            ]
+            .drop_duplicates()
+            .set_index("id"),
+            on="node_uuid",
         )
 
         logger.debug(
@@ -364,8 +391,8 @@ class DeploymentDataProcessor:
             f"at {self.from_ts.strftime('%Y-%m-%d %H:%M:%S')}"
         )
 
-        if self.index_data.empty:
-            logger.warning("Empty dataset, skipping nodes")
+        if not hasattr(self, "node_data") or self.node_data.empty:
+            logger.warning("No node data, skipping nodes")
             return ()
 
         nodes = self.node_data.reset_index().rename(columns={"@timestamp": "timestamp"})
