@@ -139,11 +139,15 @@ class DeploymentDataProcessor:
             .dropna(subset=["tier"])  # No tier information => not a data node (we drop)
         )
 
+        # For multi-tier nodes (e.g., cold+warm on same node), split cost evenly
+        # across the tiers the node serves
+        tiers_per_node = self.node_data.groupby(["@timestamp", "id"])["tier"].transform("count")
+        self.node_data["_tier_split"] = tiers_per_node
+
         if daily_cost_usd:
-            # Distribute known daily cost evenly across nodes
             num_nodes = self.node_data["id"].nunique()
             hourly_per_node = daily_cost_usd / 24.0 / max(num_nodes, 1)
-            self.node_data["cost"] = hourly_per_node * self.hour_ratio
+            self.node_data["cost"] = (hourly_per_node * self.hour_ratio) / self.node_data["_tier_split"]
             logger.info(
                 f"Using AWS daily cost ${daily_cost_usd:.2f} / {num_nodes} nodes "
                 f"= ${hourly_per_node:.4f}/hr/node"
@@ -155,10 +159,12 @@ class DeploymentDataProcessor:
             self.node_data = self.node_data.join(self.cost_data, on="tier")
 
             # Compute the actual price of the node for the corresponding time chunk
+            # Split evenly across tiers for multi-tier nodes
             self.node_data["cost"] = (
                 self.node_data["price_per_hour_per_gb"]
                 * (self.node_data["memory_limit_bytes"] / 1024 / 1024 / 1024)
                 * self.hour_ratio
+                / self.node_data["_tier_split"]
             )
 
             # Compute the cost of each tier

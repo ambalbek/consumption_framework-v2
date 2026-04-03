@@ -22,23 +22,24 @@ class NoResultsError(Exception):
     pass
 
 
-def _roles_to_tier(roles: List[str]) -> str:
+def _roles_to_tiers(roles: List[str]) -> List[str]:
     """
-    Convert the roles of a node to a tier.
-    We default to the "hotest" tier.
+    Convert node roles to ALL data tiers the node serves.
+    A node with roles [data_cold, data_warm, data_content] serves cold, warm, and hot tiers.
+    Returns a list of tiers, or empty list if not a data node.
     """
+    tiers = []
     if "data_hot" in roles or "data_content" in roles:
-        return "hot"
-    elif "data_warm" in roles:
-        return "warm"
-    elif "data_cold" in roles:
-        return "cold"
-    elif "data_frozen" in roles:
-        return "frozen"
-    elif "data" in roles:
-        return "hot"  # Generic data nodes default to hot tier (common in 7.x)
-    else:
-        return None
+        tiers.append("hot")
+    if "data_warm" in roles:
+        tiers.append("warm")
+    if "data_cold" in roles:
+        tiers.append("cold")
+    if "data_frozen" in roles:
+        tiers.append("frozen")
+    if not tiers and "data" in roles:
+        tiers.append("hot")  # Generic data nodes default to hot tier (common in 7.x)
+    return tiers
 
 
 def range_filter(range_start: datetime, range_end: datetime, timestamp_field: str = "@timestamp") -> Dict:
@@ -386,14 +387,17 @@ class ClusterStats(Stats):
                     "id": node_id,
                 }
 
-                tier = _roles_to_tier(node_attributes["roles"])
-                if not tier:
+                tiers = _roles_to_tiers(node_attributes.get("roles", []))
+                if not tiers:
                     # A master or ML node, we're not interested
                     continue
 
-                updated_record["tier"] = tier
-                updated_record["version"] = node_attributes.get("version", "unknown")
-                updated_records.append(updated_record)
+                # Create one entry per tier for multi-tier nodes
+                for tier in tiers:
+                    tier_record = updated_record.copy()
+                    tier_record["tier"] = tier
+                    tier_record["version"] = node_attributes.get("version", "unknown")
+                    updated_records.append(tier_record)
 
         # From that point on, we apply the same logic as with other classes
         df = pd.DataFrame(updated_records)
@@ -782,13 +786,15 @@ class ClusterStatsV7(Stats):
                 }
 
                 roles = node_attributes.get("roles", [])
-                tier = _roles_to_tier(roles)
-                if not tier:
+                tiers = _roles_to_tiers(roles)
+                if not tiers:
                     continue
 
-                updated_record["tier"] = tier
-                updated_record["version"] = node_attributes.get("version", "unknown")
-                updated_records.append(updated_record)
+                for tier in tiers:
+                    tier_record = updated_record.copy()
+                    tier_record["tier"] = tier
+                    tier_record["version"] = node_attributes.get("version", "unknown")
+                    updated_records.append(tier_record)
 
         df = pd.DataFrame(updated_records)
 

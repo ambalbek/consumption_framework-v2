@@ -188,6 +188,8 @@ def _analyze_chunk(
 
         source["organization_id"] = organization_id
         source["organization_name"] = organization_name
+        if daily_cost_usd:
+            source["average_cost_from_aws"] = round(daily_cost_usd, 2)
 
         # Necessary for compatibility with v1
         source["deployment_id"] = source["elasticsearch_id"]
