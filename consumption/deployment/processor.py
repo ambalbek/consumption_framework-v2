@@ -247,24 +247,57 @@ class DeploymentDataProcessor:
 
     def _enrich_app_field(self, es):
         """
-        Extract app name from index name pattern: foo-appname-*
-        Takes the second segment (between first and second dash).
-        E.g., "foo-myapp-2024.01.01" → datastream "foo-myapp" → app "myapp"
+        Look up the top-level 'app' field from actual data indices.
+        Queries each unique index for its 'app' field value.
         """
-        if "datastream" not in self.index_data.columns:
+        if "name" not in self.index_data.columns:
             return
 
-        def _extract_app(ds_name):
-            parts = ds_name.split("-", 2)
-            if len(parts) >= 2:
-                return parts[1]
-            return ds_name
+        index_names = self.index_data["name"].unique().tolist()
+        if not index_names:
+            return
 
-        self.index_data["app"] = self.index_data["datastream"].apply(_extract_app)
-        logger.info(
-            f"Extracted app names from {self.index_data['app'].nunique()} "
-            f"unique apps: {self.index_data['app'].unique()[:10].tolist()}"
-        )
+        try:
+            index_pattern = ",".join(index_names[:500])
+            response = es.search(
+                index=index_pattern,
+                size=0,
+                allow_no_indices=True,
+                ignore_unavailable=True,
+                aggs={
+                    "per_index": {
+                        "terms": {"field": "_index", "size": len(index_names)},
+                        "aggs": {
+                            "app_value": {
+                                "terms": {"field": "app", "size": 1}
+                            }
+                        },
+                    }
+                },
+            )
+
+            app_map = {}
+            for bucket in (
+                response.get("aggregations", {})
+                .get("per_index", {})
+                .get("buckets", [])
+            ):
+                idx_name = bucket["key"]
+                app_buckets = bucket.get("app_value", {}).get("buckets", [])
+                if app_buckets:
+                    app_map[idx_name] = app_buckets[0]["key"]
+
+            if app_map:
+                self.index_data["app"] = self.index_data["name"].map(app_map)
+                logger.info(
+                    f"Enriched {len(app_map)} indices with 'app' field: "
+                    f"{list(set(app_map.values()))[:10]}"
+                )
+            else:
+                logger.warning("No 'app' field found in data indices")
+
+        except Exception as e:
+            logger.warning(f"Failed to look up 'app' field from data indices: {e}")
 
     def _get_datastreams_usages(self) -> Iterable:
         if self.index_data.empty:
