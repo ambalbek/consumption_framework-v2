@@ -123,13 +123,14 @@ def _source_walk(
                         {
                             "range": {
                                 timestamp_field: {
-                                    "gte": range_start.isoformat(),
-                                    "lt": min(
+                                    "gte": int(range_start.timestamp() * 1000),
+                                    "lt": int(min(
                                         range_end,
                                         datetime.now(pytz.utc).replace(
                                             minute=0, second=0, microsecond=0
                                         ),
-                                    ).isoformat(),
+                                    ).timestamp() * 1000),
+                                    "format": "epoch_millis",
                                 }
                             }
                         },

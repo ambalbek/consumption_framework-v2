@@ -45,8 +45,9 @@ def range_filter(range_start: datetime, range_end: datetime, timestamp_field: st
     return {
         "range": {
             timestamp_field: {
-                "gte": range_start.isoformat(),
-                "lt": range_end.isoformat(),
+                "gte": int(range_start.timestamp() * 1000),
+                "lt": int(range_end.timestamp() * 1000),
+                "format": "epoch_millis",
             }
         }
     }
