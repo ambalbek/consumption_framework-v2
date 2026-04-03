@@ -26,7 +26,7 @@ class Consumption:
         threads: int = 5,
         on_prem_costs_dict: Optional[Dict[str, float]] = None,
         total_monthly_cost_usd: Optional[float] = None,
-        daily_cost_usd: Optional[float] = None,
+        aws_cost_explorer_config: Optional[Dict[str, Any]] = None,
         force: bool = False,
         compute_usages: bool = False,
     ):
@@ -35,7 +35,7 @@ class Consumption:
         self.billing_api_key = billing_api_key
         self.on_prem_costs_dict = on_prem_costs_dict
         self.total_monthly_cost_usd = total_monthly_cost_usd
-        self.daily_cost_usd = daily_cost_usd
+        self.aws_cost_explorer_config = aws_cost_explorer_config
         self.destination_es = ElasticsearchClient(**destination_config)
         self.threads = threads
         self.force = force
@@ -120,7 +120,7 @@ class Consumption:
             parsing_regex_str=self.parsing_regex_str,
             on_prem_costs_dict=self.on_prem_costs_dict,
             total_monthly_cost_usd=self.total_monthly_cost_usd,
-            daily_cost_usd=self.daily_cost_usd,
+            aws_cost_explorer_config=self.aws_cost_explorer_config,
         )
 
 

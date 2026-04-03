@@ -27,12 +27,18 @@ consumption_destination:
   api_key: 'YYYYYYYYYYY'
   cloud_id: 'YYYYYYYYYYY:YYYYYYYYYYY'
 
-# Set your known daily infrastructure cost in USD.
-# Distributes evenly across all nodes. Simplest option for reserved instances.
-# daily_cost_usd: 1400
-
-# Or set monthly total instead:
-# total_monthly_cost_usd: 42000
+# Fetch real daily cost from AWS Cost Explorer (includes RI/savings plan discounts).
+# Cost is distributed evenly across all ES nodes.
+# aws_cost_explorer:
+#   aws_access_key_id: 'AKIAXXXXXXXX'
+#   aws_secret_access_key: 'XXXXXXXX'
+#   region: 'us-east-1'
+#   tag_key: 'Application Name'
+#   tag_values:
+#     - 'ELMS - Enterprise Logging and Monitoring System'
+#     - 'elms'
+#   min_daily_cost: 500        # if average is below this, use fallback
+#   fallback_daily_cost: 887   # fallback when data is incomplete
 
 # Alternatively, specify cost per 1 GB RAM per hour manually:
 # on_prem_costs:

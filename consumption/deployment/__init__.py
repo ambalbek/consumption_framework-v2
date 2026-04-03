@@ -311,11 +311,17 @@ def monitoring_analyzer(
     parsing_regex_str: Optional[str] = None,
     on_prem_costs_dict: Optional[Dict[str, float]] = None,
     total_monthly_cost_usd: Optional[float] = None,
-    daily_cost_usd: Optional[float] = None,
+    aws_cost_explorer_config: Optional[Dict] = None,
 ):
+    # Fetch daily cost from AWS Cost Explorer if configured
+    daily_cost_usd = None
+    if aws_cost_explorer_config:
+        from ..utils.aws_cost_explorer import get_average_daily_cost
+        daily_cost_usd = get_average_daily_cost(aws_cost_explorer_config)
+
     cost_provider = (
         ESSBillingClientCostsProvider(api_host, billing_api_key, organization_id)
-        if not on_prem_costs_dict and not total_monthly_cost_usd
+        if not on_prem_costs_dict and not total_monthly_cost_usd and not daily_cost_usd
         else None
     )
 

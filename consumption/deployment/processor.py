@@ -53,7 +53,6 @@ class DeploymentDataProcessor:
         self.from_ts = from_ts
         self.to_ts = from_ts + timedelta(hours=1)
         self.monitoring_version = monitoring_version
-        self.daily_cost_usd = daily_cost_usd
 
         # Select the appropriate Stats classes for V7 or V8
         # "7@" means V7 indices but using @timestamp field
@@ -140,85 +139,33 @@ class DeploymentDataProcessor:
             .dropna(subset=["tier"])  # No tier information => not a data node (we drop)
         )
 
-        # Cap memory_limit_bytes: when cgroup has no limit, ES reports max int64
-        # which makes any per-GB calculation produce absurd numbers
-        MAX_MEMORY_BYTES = 2 * 1024 * 1024 * 1024 * 1024  # 2 TB cap
-        self.node_data.loc[
-            self.node_data["memory_limit_bytes"] > MAX_MEMORY_BYTES,
-            "memory_limit_bytes",
-        ] = None
-
-        # If cloud metadata is missing (V7 path), fetch it from V8 metricbeat data
-        has_cloud = (
-            "instance_type" in self.node_data.columns
-            and self.node_data["instance_type"].notna().any()
-        )
-        if not has_cloud:
-            self._enrich_cloud_metadata(es, monitoring_index_pattern)
-            has_cloud = (
-                "instance_type" in self.node_data.columns
-                and self.node_data["instance_type"].notna().any()
-            )
-
-        # Cost calculation priority:
-        # 1. daily_cost_usd config → distribute known cost across nodes
-        # 2. AWS cloud metadata → EC2 pricing (on-demand or Cost Explorer)
-        # 3. on_prem_costs / total_monthly_cost_usd config → per-GB pricing
-        if self.daily_cost_usd:
+        if daily_cost_usd:
+            # Distribute known daily cost evenly across nodes
             num_nodes = self.node_data["id"].nunique()
-            hourly_per_node = self.daily_cost_usd / 24.0 / max(num_nodes, 1)
+            hourly_per_node = daily_cost_usd / 24.0 / max(num_nodes, 1)
             self.node_data["cost"] = hourly_per_node * self.hour_ratio
             logger.info(
-                f"Distributing ${self.daily_cost_usd}/day across {num_nodes} nodes "
+                f"Using AWS daily cost ${daily_cost_usd:.2f} / {num_nodes} nodes "
                 f"= ${hourly_per_node:.4f}/hr/node"
             )
             self.node_data["tier_cost"] = self.node_data.groupby(
                 ["tier", "@timestamp"]
             )["cost"].transform("sum")
-
-        elif has_cloud:
-            from ..utils.aws_pricing import get_ec2_hourly_price
-
-            account_id = (
-                self.node_data.loc[
-                    self.node_data["instance_type"].notna(), "cloud_account_id"
-                ].iloc[0]
-                if "cloud_account_id" in self.node_data.columns
-                and self.node_data["cloud_account_id"].notna().any()
-                else None
-            )
-            logger.info(
-                f"AWS cloud metadata found (account={account_id}), "
-                f"fetching EC2 pricing"
-            )
-            self.node_data["cost"] = self.node_data.apply(
-                lambda row: (
-                    get_ec2_hourly_price(
-                        row.get("instance_type", ""),
-                        row.get("cloud_region", "us-east-1"),
-                        account_id=account_id,
-                    )
-                    or 0.0
-                )
-                * self.hour_ratio,
-                axis=1,
-            )
-            self.node_data["tier_cost"] = self.node_data.groupby(
-                ["tier", "@timestamp"]
-            )["cost"].transform("sum")
-
         elif not self.skip_prices:
             self.node_data = self.node_data.join(self.cost_data, on="tier")
-            mem_gb = self.node_data["memory_limit_bytes"].fillna(0) / 1024 / 1024 / 1024
+
+            # Compute the actual price of the node for the corresponding time chunk
             self.node_data["cost"] = (
-                self.node_data["price_per_hour_per_gb"] * mem_gb * self.hour_ratio
+                self.node_data["price_per_hour_per_gb"]
+                * (self.node_data["memory_limit_bytes"] / 1024 / 1024 / 1024)
+                * self.hour_ratio
             )
+
+            # Compute the cost of each tier
             self.node_data["tier_cost"] = self.node_data.groupby(
                 ["tier", "@timestamp"]
             )["cost"].transform("sum")
-
         else:
-            self.node_data["cost"] = 0
             self.node_data["tier_cost"] = None
 
         # Fetch index data (may be empty if index metricset not collected)
@@ -288,90 +235,6 @@ class DeploymentDataProcessor:
             how="left",
             suffixes=(None, ""),
         )
-
-    def _enrich_cloud_metadata(self, es, monitoring_index_pattern):
-        """
-        Fetch cloud metadata (instance_type, region, account_id) from V8 metricbeat
-        data and apply it to node_data. V7 internal monitoring doesn't include cloud
-        fields, but V8 metricbeat monitoring the same nodes does.
-        """
-        node_ids = self.node_data["id"].unique().tolist()
-        if not node_ids:
-            return
-
-        try:
-            # Query V8 metricbeat data for cloud info per node
-            response = es.search(
-                index=monitoring_index_pattern or ".monitoring-es-8-*,.monitoring-es-9-*",
-                size=0,
-                allow_no_indices=True,
-                expand_wildcards=["open", "hidden"],
-                query={
-                    "bool": {
-                        "filter": [
-                            {"exists": {"field": "cloud.machine.type"}},
-                            {"terms": {"elasticsearch.node.id": node_ids}},
-                        ]
-                    }
-                },
-                aggs={
-                    "per_node": {
-                        "terms": {
-                            "field": "elasticsearch.node.id",
-                            "size": len(node_ids),
-                        },
-                        "aggs": {
-                            "cloud_info": {
-                                "top_metrics": {
-                                    "metrics": [
-                                        {"field": "cloud.machine.type"},
-                                        {"field": "cloud.region"},
-                                        {"field": "cloud.account.id"},
-                                    ],
-                                    "sort": {"@timestamp": "desc"},
-                                }
-                            }
-                        },
-                    }
-                },
-            )
-
-            buckets = (
-                response.get("aggregations", {})
-                .get("per_node", {})
-                .get("buckets", [])
-            )
-
-            if not buckets:
-                logger.debug("No cloud metadata found in V8 monitoring data")
-                return
-
-            # Build node_id -> cloud info mapping
-            cloud_map = {}
-            for bucket in buckets:
-                node_id = bucket["key"]
-                metrics = bucket["cloud_info"]["top"][0]["metrics"]
-                cloud_map[node_id] = {
-                    "instance_type": metrics.get("cloud.machine.type"),
-                    "cloud_region": metrics.get("cloud.region"),
-                    "cloud_account_id": metrics.get("cloud.account.id"),
-                }
-
-            # Apply to node_data
-            for col in ["instance_type", "cloud_region", "cloud_account_id"]:
-                if col not in self.node_data.columns:
-                    self.node_data[col] = None
-                self.node_data[col] = self.node_data["id"].map(
-                    lambda nid: cloud_map.get(nid, {}).get(col)
-                ).fillna(self.node_data[col])
-
-            logger.info(
-                f"Enriched {len(cloud_map)} nodes with AWS cloud metadata "
-                f"from V8 monitoring data"
-            )
-
-        except Exception as e:
-            logger.warning(f"Failed to fetch cloud metadata from V8 data: {e}")
 
     def _get_datastreams_usages(self) -> Iterable:
         if self.index_data.empty:
