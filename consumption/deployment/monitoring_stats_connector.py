@@ -287,9 +287,9 @@ class Stats(ABC):
                     record.update(
                         {
                             f"dv_{counter_name}": none_if_neg(
-                                ten_minute_bucket[
-                                    f"dv_{counter_name.replace('.', '__')}"
-                                ]["value"]
+                                ten_minute_bucket.get(
+                                    f"dv_{counter_name.replace('.', '__')}", {}
+                                ).get("value")
                             )
                             for counter_name in self.counter_fields
                         }
@@ -298,9 +298,9 @@ class Stats(ABC):
                     # Gauge
                     record.update(
                         {
-                            f"g_{gauge_name}_{percent}": ten_minute_bucket[
-                                f"g_{gauge_name.replace('.', '__')}"
-                            ]["values"][percent]
+                            f"g_{gauge_name}_{percent}": ten_minute_bucket.get(
+                                f"g_{gauge_name.replace('.', '__')}", {}
+                            ).get("values", {}).get(percent)
                             for gauge_name in self.gauge_fields
                             for percent in self.percentiles
                         }
@@ -601,20 +601,25 @@ class IndexStats(Stats):
 
         # For >8.13, we can use dataset size instead of store size
         # We simply check for non-null values in the dataset size fields and override the store size
-        df.loc[
-            ~df["total_data_set_size_in_bytes_delta"].isna(),
-            "total_store_size_in_bytes_delta",
-        ] = df["total_data_set_size_in_bytes_delta"]
-        df.loc[
-            ~df["primary_data_set_size_in_bytes_delta"].isna(),
-            "primary_store_size_in_bytes_delta",
-        ] = df["primary_data_set_size_in_bytes_delta"]
-        df.loc[
-            ~df["total_data_set_size_in_bytes"].isna(), "total_store_size_in_bytes"
-        ] = df["total_data_set_size_in_bytes"]
-        df.loc[
-            ~df["primary_data_set_size_in_bytes"].isna(), "primary_store_size_in_bytes"
-        ] = df["primary_data_set_size_in_bytes"]
+        # These columns may not exist if the field is absent from all documents
+        if "total_data_set_size_in_bytes_delta" in df.columns:
+            df.loc[
+                ~df["total_data_set_size_in_bytes_delta"].isna(),
+                "total_store_size_in_bytes_delta",
+            ] = df["total_data_set_size_in_bytes_delta"]
+        if "primary_data_set_size_in_bytes_delta" in df.columns:
+            df.loc[
+                ~df["primary_data_set_size_in_bytes_delta"].isna(),
+                "primary_store_size_in_bytes_delta",
+            ] = df["primary_data_set_size_in_bytes_delta"]
+        if "total_data_set_size_in_bytes" in df.columns:
+            df.loc[
+                ~df["total_data_set_size_in_bytes"].isna(), "total_store_size_in_bytes"
+            ] = df["total_data_set_size_in_bytes"]
+        if "primary_data_set_size_in_bytes" in df.columns:
+            df.loc[
+                ~df["primary_data_set_size_in_bytes"].isna(), "primary_store_size_in_bytes"
+            ] = df["primary_data_set_size_in_bytes"]
 
         # Convert the time deltas to seconds
         df["search_query_time_in_seconds_delta"] = (
