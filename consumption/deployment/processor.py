@@ -66,6 +66,7 @@ class DeploymentDataProcessor:
             shard_stats_cls = ShardStats
 
         id_filter = elasticsearch_id_filter(self.elasticsearch_id, monitoring_version)
+        ts_field = "timestamp" if monitoring_version == "7" else "@timestamp"
 
         self.cost_data = price_df
         self.skip_prices = self.cost_data.empty
@@ -85,6 +86,7 @@ class DeploymentDataProcessor:
                 range_filter(
                     self.from_ts - timedelta(seconds=self.chunk_size_seconds),
                     self.to_ts,
+                    ts_field,
                 ),
                 id_filter,
             ],
@@ -108,6 +110,7 @@ class DeploymentDataProcessor:
                 range_filter(
                     self.from_ts - timedelta(seconds=self.chunk_size_seconds),
                     self.to_ts,
+                    ts_field,
                 ),
                 id_filter,
             ],
@@ -122,6 +125,7 @@ class DeploymentDataProcessor:
                     range_filter(
                         self.from_ts - timedelta(seconds=self.chunk_size_seconds),
                         self.to_ts,
+                        ts_field,
                     ),
                     id_filter,
                 ],
@@ -162,6 +166,7 @@ class DeploymentDataProcessor:
                     range_filter(
                         self.from_ts - timedelta(seconds=5 * self.chunk_size_seconds),
                         self.to_ts,
+                        ts_field,
                     ),
                     id_filter,
                 ],

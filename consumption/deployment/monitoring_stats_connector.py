@@ -41,10 +41,10 @@ def _roles_to_tier(roles: List[str]) -> str:
         return None
 
 
-def range_filter(range_start: datetime, range_end: datetime) -> Dict:
+def range_filter(range_start: datetime, range_end: datetime, timestamp_field: str = "@timestamp") -> Dict:
     return {
         "range": {
-            "@timestamp": {
+            timestamp_field: {
                 "gte": range_start.isoformat(),
                 "lt": range_end.isoformat(),
             }

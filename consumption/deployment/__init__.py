@@ -82,11 +82,7 @@ def _source_walk(
     """
     if dataset_filter is None:
         dataset_filter = {
-            "term": {
-                "event.dataset": {
-                    "value": "elasticsearch.cluster.stats"
-                }
-            }
+            "exists": {"field": "elasticsearch.cluster.name"}
         }
 
     after = None
