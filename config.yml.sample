@@ -1,0 +1,52 @@
+---
+# The name of your organization, this will be populated on every single resulting document
+organization_name: "Change me"
+
+# The organization ID from Elastic Cloud, for ESS deployments.
+# You can comment this out for on-premises deployments
+organization_id: "12345"
+
+# The billing API key for your organization
+# You can comment this out for on-premises deployments
+billing_api_key: "essu_XXXX"
+
+# Where we'll read the monitoring data from
+monitoring_source:
+  #hosts is not required if you're providing the cloud_id
+  #hosts: 'https://where-i-want-to-get-the-data:443'
+  api_key: 'ZZZZZZZZZZZ'
+  retry_on_timeout: true
+  request_timeout: 60
+  cloud_id: 'ZZZZZZZZZZZ:ZZZZZZZZZZZ'
+
+# Where the consumption data (result of the script's run) will be sent
+# This can be the same cluster as the source.
+consumption_destination:
+  #hosts is not required if you're providing the cloud_id
+  #hosts: 'https://where-i-want-the-data-to-be-indexed:443'
+  api_key: 'YYYYYYYYYYY'
+  cloud_id: 'YYYYYYYYYYY:YYYYYYYYYYY'
+
+# For on-premises deployment, you'll need to specify the costs of your tier per 1 GB RAM per hour
+# on_prem_costs:
+#   hot: 1.0
+#   warm: 0.5
+#   cold: 0.25
+#   frozen: 0.1
+
+# Uncomment and modify this if you want to read indices other than the default monitoring ones
+# (for example using cross-cluster search)
+# By default, both V8/V9 (.monitoring-es-8-*,.monitoring-es-9-*) and V7 (.monitoring-es-7-*)
+# monitoring indices are queried. Setting a custom pattern disables V7 auto-detection.
+# monitoring_index_pattern: '.monitoring-es-8-*,.monitoring-es-9-*'
+
+# Uncomment and modify this for Federal customers using a non-standard ESS endpoint
+# api_host: 'api.elastic-cloud.com'
+
+# If you want to change the parsing regex for the index names, you can do so here.
+# This should yield 2 groups:
+# - the name of the datastream (or index "group" you want to identify)
+# - the date of the index, which is used for --compute-usages
+# If capture fails, we will default to the name of the index.
+# This below is the default regex.
+# parsing_regex_str: '(?:partial-)?(?:restored-)?(?:shrink-.{4}-)?(?:\.ds-)?(.*?)-?(\d{4}\.\d{2}\.\d{2})?(?:-\d+)?$'

@@ -1,0 +1,22 @@
+{
+  "id": "consumption",
+  "processors": [
+    {
+      "date_index_name": {
+        "field": "@timestamp",
+        "date_formats": [
+          "ISO8601"
+        ],
+        "index_name_prefix": "consumption-",
+        "date_rounding": "M",
+        "index_name_format": "yyyy.MM.dd"
+      }
+    },
+    {
+      "set": {
+        "field": "event.ingested",
+        "value": "{{_ingest.timestamp}}"
+      }
+    }
+  ]
+}

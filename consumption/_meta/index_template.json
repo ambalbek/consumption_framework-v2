@@ -1,0 +1,132 @@
+{
+  "name": "consumption",
+  "index_patterns": ["consumption*"],
+  "priority": 500,
+  "template": {
+    "mappings": {
+      "dynamic_templates": [
+        {
+          "strings_as_keywords": {
+            "match_mapping_type": "string",
+            "mapping": {
+              "type": "keyword"
+            }
+          }
+        },
+        {
+          "seconds_as_double": {
+            "match_pattern": "regex",
+            "match": ".*seconds.*",
+            "mapping": {
+              "type": "double"
+            }
+          }
+        },
+        {
+          "pct_as_double": {
+            "match_pattern": "regex",
+            "match": ".*pct.*",
+            "mapping": {
+              "type": "double"
+            }
+          }
+        },
+        {
+          "cost_as_double": {
+            "match_pattern": "regex",
+            "match": ".*cost.*",
+            "mapping": {
+              "type": "double"
+            }
+          }
+        },
+        {
+          "bytes_as_long": {
+            "match_pattern": "regex",
+            "match": ".*bytes.*",
+            "mapping": {
+              "type": "long"
+            }
+          }
+        }
+      ],
+      "properties": {
+        "dataset": {
+          "type": "keyword"
+        },
+        "@timestamp": {
+          "type": "date"
+        },
+        "event.ingested": {
+          "type": "date"
+        },
+        "organization_id": {
+          "type": "keyword"
+        },
+        "organization_name": {
+          "type": "keyword"
+        },
+        "deployment_id": {
+          "type": "keyword"
+        },
+        "deployment_name": {
+          "type": "keyword"
+        },
+        "elasticsearch_id": {
+          "type": "keyword"
+        },
+        "datastream": {
+          "type": "keyword"
+        },
+        "tier": {
+          "type": "keyword"
+        }
+      }
+    },
+    "settings": {
+      "index": {
+        "number_of_shards": "1",
+        "number_of_replicas": "1",
+        "refresh_interval": "30s",
+        "codec": "best_compression",
+        "default_pipeline": "consumption",
+        "lifecycle": {
+          "name": "consumption",
+          "parse_origination_date": true
+        }
+      }
+    },
+    "aliases": {
+      "consumption-deployment": {
+        "filter": {
+          "term": {
+            "dataset": "deployment"
+          }
+        }
+      },
+      "consumption-node": {
+        "filter": {
+          "term": {
+            "dataset": "node"
+          }
+        }
+      },
+      "consumption-datastream": {
+        "filter": {
+          "term": {
+            "dataset": "datastream"
+          }
+        }
+      },
+      "consumption-datastream_usage": {
+        "filter": {
+          "term": {
+            "dataset": "datastream_usage"
+          }
+        }
+      }
+    }
+  }
+}
+
+

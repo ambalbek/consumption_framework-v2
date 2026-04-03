@@ -1,0 +1,10 @@
+click>=8.1.3
+tqdm>=4.66.1
+# Use elasticsearch>=8.3.3,<9 for ES 8.x clusters (default)
+# Use elasticsearch>=9.0.0,<10 for ES 9.x clusters
+elasticsearch>=8.3.3,<9
+pandas>=1.5.0
+numpy>=1.23.2
+PyYAML>=6.0.1
+requests>=2.31.0
+pytz>=2023.3.post1

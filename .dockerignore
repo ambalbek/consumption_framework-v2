@@ -1,0 +1,14 @@
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.py[cod]
+*.log
+config.json
+cribl_snapshots/
+appids.txt
+httpd-add-to-existing.conf
+docker-compose.yml
+README.md
+ui.py
