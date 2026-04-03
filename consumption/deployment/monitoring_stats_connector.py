@@ -353,7 +353,13 @@ class ClusterStats(Stats):
 
     def search_as_dataframe(self, filters: List[Dict[str, Any]] = []):
         # We want to post-process the records
-        records = list(self.search(filters))
+        try:
+            records = list(self.search(filters))
+        except NoResultsError:
+            logger.warning(
+                f"No results for {self.__class__.__name__}, returning empty DataFrame"
+            )
+            return pd.DataFrame()
         updated_records = []
 
         for record in records:
@@ -724,7 +730,13 @@ class ClusterStatsV7(Stats):
         )
 
     def search_as_dataframe(self, filters: List[Dict[str, Any]] = []):
-        records = list(self.search(filters))
+        try:
+            records = list(self.search(filters))
+        except NoResultsError:
+            logger.warning(
+                f"No results for {self.__class__.__name__}, returning empty DataFrame"
+            )
+            return pd.DataFrame()
         updated_records = []
 
         for record in records:
