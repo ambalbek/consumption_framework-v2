@@ -196,6 +196,7 @@ def consume_monitoring(config, lookbehind, threads, force, vpn, compute_usages):
         billing_api_key=str(config.get("billing_api_key")),
         on_prem_costs_dict=config.get("on_prem_costs"),
         total_monthly_cost_usd=config.get("total_monthly_cost_usd"),
+        daily_cost_usd=config.get("daily_cost_usd"),
         destination_config=config["consumption_destination"],
         source_config=config["monitoring_source"],
         threads=threads,

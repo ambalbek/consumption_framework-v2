@@ -179,6 +179,7 @@ def _analyze_chunk(
     parsing_regex_str: Optional[str] = None,
     compute_usages: bool = False,
     monitoring_version: str = "8",
+    daily_cost_usd: Optional[float] = None,
 ):
     def _as_elasticsearch_doc(tuple: namedtuple) -> dict:
         source = tuple._asdict()
@@ -239,6 +240,7 @@ def _analyze_chunk(
                 monitoring_index_pattern=monitoring_index_pattern,
                 parsing_regex_str=parsing_regex_str,
                 monitoring_version=monitoring_version,
+                daily_cost_usd=daily_cost_usd,
             ).process(compute_usages=compute_usages)
         ),
     ):
@@ -309,6 +311,7 @@ def monitoring_analyzer(
     parsing_regex_str: Optional[str] = None,
     on_prem_costs_dict: Optional[Dict[str, float]] = None,
     total_monthly_cost_usd: Optional[float] = None,
+    daily_cost_usd: Optional[float] = None,
 ):
     cost_provider = (
         ESSBillingClientCostsProvider(api_host, billing_api_key, organization_id)
@@ -369,6 +372,7 @@ def monitoring_analyzer(
                 "parsing_regex_str": parsing_regex_str,
                 "compute_usages": compute_usages,
                 "monitoring_version": monitoring_version,
+                "daily_cost_usd": daily_cost_usd,
             }
             engine.submit_task(_analyze_chunk, params)
             submitted += 1

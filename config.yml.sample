@@ -27,9 +27,12 @@ consumption_destination:
   api_key: 'YYYYYYYYYYY'
   cloud_id: 'YYYYYYYYYYY:YYYYYYYYYYY'
 
-# For on-premises deployment, set your total monthly infrastructure cost in USD.
-# Costs will be automatically distributed across tiers and nodes.
-# total_monthly_cost_usd: 1400
+# Set your known daily infrastructure cost in USD.
+# Distributes evenly across all nodes. Simplest option for reserved instances.
+# daily_cost_usd: 1400
+
+# Or set monthly total instead:
+# total_monthly_cost_usd: 42000
 
 # Alternatively, specify cost per 1 GB RAM per hour manually:
 # on_prem_costs:

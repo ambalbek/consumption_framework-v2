@@ -46,12 +46,14 @@ class DeploymentDataProcessor:
         monitoring_index_pattern: Optional[str] = None,
         parsing_regex_str: Optional[str] = None,
         monitoring_version: str = "8",
+        daily_cost_usd: Optional[float] = None,
     ):
         self.es = es
         self.elasticsearch_id = elasticsearch_id
         self.from_ts = from_ts
         self.to_ts = from_ts + timedelta(hours=1)
         self.monitoring_version = monitoring_version
+        self.daily_cost_usd = daily_cost_usd
 
         # Select the appropriate Stats classes for V7 or V8
         # "7@" means V7 indices but using @timestamp field
@@ -158,51 +160,65 @@ class DeploymentDataProcessor:
                 and self.node_data["instance_type"].notna().any()
             )
 
-        if not self.skip_prices:
-
-            if has_cloud:
-                from ..utils.aws_pricing import get_ec2_hourly_price
-
-                # Get account ID from first node with cloud data
-                account_id = (
-                    self.node_data.loc[
-                        self.node_data["instance_type"].notna(), "cloud_account_id"
-                    ].iloc[0]
-                    if "cloud_account_id" in self.node_data.columns
-                    else None
-                )
-                logger.info(
-                    f"AWS cloud metadata found (account={account_id}), "
-                    f"fetching real EC2 pricing"
-                )
-                # EC2 price is per-instance, NOT per-GB — already includes full instance cost
-                self.node_data["cost"] = self.node_data.apply(
-                    lambda row: (
-                        get_ec2_hourly_price(
-                            row.get("instance_type", ""),
-                            row.get("cloud_region", "us-east-1"),
-                            account_id=account_id,
-                        )
-                        or 0.0
-                    )
-                    * self.hour_ratio,
-                    axis=1,
-                )
-            else:
-                self.node_data = self.node_data.join(self.cost_data, on="tier")
-
-                # For nodes without memory info, estimate from cost_data
-                # Avoid multiplying by None or absurd values
-                mem_gb = self.node_data["memory_limit_bytes"].fillna(0) / 1024 / 1024 / 1024
-                self.node_data["cost"] = (
-                    self.node_data["price_per_hour_per_gb"] * mem_gb * self.hour_ratio
-                )
-
-            # Compute the cost of each tier
+        # Cost calculation priority:
+        # 1. daily_cost_usd config → distribute known cost across nodes
+        # 2. AWS cloud metadata → EC2 pricing (on-demand or Cost Explorer)
+        # 3. on_prem_costs / total_monthly_cost_usd config → per-GB pricing
+        if self.daily_cost_usd:
+            num_nodes = self.node_data["id"].nunique()
+            hourly_per_node = self.daily_cost_usd / 24.0 / max(num_nodes, 1)
+            self.node_data["cost"] = hourly_per_node * self.hour_ratio
+            logger.info(
+                f"Distributing ${self.daily_cost_usd}/day across {num_nodes} nodes "
+                f"= ${hourly_per_node:.4f}/hr/node"
+            )
             self.node_data["tier_cost"] = self.node_data.groupby(
                 ["tier", "@timestamp"]
             )["cost"].transform("sum")
+
+        elif has_cloud:
+            from ..utils.aws_pricing import get_ec2_hourly_price
+
+            account_id = (
+                self.node_data.loc[
+                    self.node_data["instance_type"].notna(), "cloud_account_id"
+                ].iloc[0]
+                if "cloud_account_id" in self.node_data.columns
+                and self.node_data["cloud_account_id"].notna().any()
+                else None
+            )
+            logger.info(
+                f"AWS cloud metadata found (account={account_id}), "
+                f"fetching EC2 pricing"
+            )
+            self.node_data["cost"] = self.node_data.apply(
+                lambda row: (
+                    get_ec2_hourly_price(
+                        row.get("instance_type", ""),
+                        row.get("cloud_region", "us-east-1"),
+                        account_id=account_id,
+                    )
+                    or 0.0
+                )
+                * self.hour_ratio,
+                axis=1,
+            )
+            self.node_data["tier_cost"] = self.node_data.groupby(
+                ["tier", "@timestamp"]
+            )["cost"].transform("sum")
+
+        elif not self.skip_prices:
+            self.node_data = self.node_data.join(self.cost_data, on="tier")
+            mem_gb = self.node_data["memory_limit_bytes"].fillna(0) / 1024 / 1024 / 1024
+            self.node_data["cost"] = (
+                self.node_data["price_per_hour_per_gb"] * mem_gb * self.hour_ratio
+            )
+            self.node_data["tier_cost"] = self.node_data.groupby(
+                ["tier", "@timestamp"]
+            )["cost"].transform("sum")
+
         else:
+            self.node_data["cost"] = 0
             self.node_data["tier_cost"] = None
 
         # Fetch index data (may be empty if index metricset not collected)
