@@ -246,7 +246,7 @@ def _analyze_chunk(
         else:
             logger.error(f"Failed to index document: {action}")
 
-    logger.debug(f"Data upload completed: {ok_count} OK")
+    logger.info(f"Data upload completed: {ok_count} OK for {elasticsearch_id} (v{monitoring_version})")
 
 
 def _iter_source_walks(
@@ -272,6 +272,8 @@ def _iter_source_walks(
         yield from_ts, elasticsearch_id, "8"
 
     # V7 source walk (internal monitoring format: timestamp, cluster_uuid)
+    logger.info(f"Starting V7 source walk on index={v7_index!r}")
+    v7_count = 0
     try:
         for from_ts, elasticsearch_id in _source_walk(
             source_es,
@@ -282,9 +284,11 @@ def _iter_source_walks(
             cluster_id_field="cluster_uuid",
             dataset_filter={"term": {"type": "cluster_stats"}},
         ):
+            v7_count += 1
             yield from_ts, elasticsearch_id, "7"
     except Exception as e:
-        logger.warning(f"V7 source walk failed: {e}")
+        logger.error(f"V7 source walk failed: {e}", exc_info=True)
+    logger.info(f"V7 source walk found {v7_count} chunks")
 
 
 def monitoring_analyzer(
@@ -311,42 +315,60 @@ def monitoring_analyzer(
 
     checker = DepDataChecker(destination_es, organization_id, force=force)
 
+    # Collect all discovered chunks first so we can log a summary
+    discovered = []
+    for from_ts, elasticsearch_id, monitoring_version in _iter_source_walks(
+        source_es, range_start, range_end, monitoring_index_pattern,
+    ):
+        discovered.append((from_ts, elasticsearch_id, monitoring_version))
+
+    v7_count = sum(1 for _, _, v in discovered if v.startswith("7"))
+    v8_count = sum(1 for _, _, v in discovered if v == "8")
+    unique_clusters = set((eid, v) for _, eid, v in discovered)
+    logger.info(
+        f"Source walk discovered {len(discovered)} chunks "
+        f"({v8_count} V8, {v7_count} V7) "
+        f"across {len(unique_clusters)} unique cluster(s): "
+        f"{[c[0] for c in unique_clusters]}"
+    )
+
+    if not discovered:
+        logger.error("No monitoring data found in any format. Nothing to process.")
+        return
+
     with MultithreadingEngine(workers=threads) as engine:
-        [
+        submitted = 0
+        for from_ts, elasticsearch_id, monitoring_version in discovered:
+            if checker.is_in_cluster(
+                from_ts,
+                from_ts + timedelta(hours=1),
+                filters=[{"term": {"elasticsearch_id": elasticsearch_id}}],
+            ):
+                continue
+
+            params = {
+                "source_es": source_es,
+                "destination_es": destination_es,
+                "organization_id": organization_id,
+                "organization_name": organization_name,
+                "elasticsearch_id": elasticsearch_id,
+                "from_ts": from_ts,
+                "price_df": (
+                    get_on_prem_costs(on_prem_costs_dict)
+                    if on_prem_costs_dict
+                    else cost_provider.get_elasticsearch_costs(
+                        elasticsearch_id, from_ts
+                    )
+                ),
+                "monitoring_index_pattern": monitoring_index_pattern,
+                "parsing_regex_str": parsing_regex_str,
+                "compute_usages": compute_usages,
+                "monitoring_version": monitoring_version,
+            }
             engine.submit_task(_analyze_chunk, params)
-            for params in (
-                {
-                    "source_es": source_es,
-                    "destination_es": destination_es,
-                    "organization_id": organization_id,
-                    "organization_name": organization_name,
-                    "elasticsearch_id": elasticsearch_id,
-                    "from_ts": from_ts,
-                    "price_df": (
-                        get_on_prem_costs(on_prem_costs_dict)
-                        if on_prem_costs_dict
-                        else cost_provider.get_elasticsearch_costs(
-                            elasticsearch_id, from_ts
-                        )
-                    ),
-                    "monitoring_index_pattern": monitoring_index_pattern,
-                    "parsing_regex_str": parsing_regex_str,
-                    "compute_usages": compute_usages,
-                    "monitoring_version": monitoring_version,
-                }
-                for from_ts, elasticsearch_id, monitoring_version in _iter_source_walks(
-                    source_es,
-                    range_start,
-                    range_end,
-                    monitoring_index_pattern,
-                )
-                if not checker.is_in_cluster(
-                    from_ts,
-                    from_ts + timedelta(hours=1),
-                    filters=[{"term": {"elasticsearch_id": elasticsearch_id}}],
-                )
-            )
-        ]
+            submitted += 1
+
+        logger.info(f"Submitted {submitted} tasks for processing")
 
 
 __all__ = ["monitoring_analyzer"]
