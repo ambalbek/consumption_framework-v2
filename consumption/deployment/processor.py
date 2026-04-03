@@ -302,7 +302,7 @@ class DeploymentDataProcessor:
     def _get_datastreams_usages(self) -> Iterable:
         if self.index_data.empty:
             logger.warning("Empty dataset, skipping datastreams usages")
-            return ()
+            return []
 
         logger.debug(
             f"Grouping {len(self.index_data)} indices "
@@ -367,8 +367,9 @@ class DeploymentDataProcessor:
             columns={"@timestamp": "timestamp"}
         )
 
-        # Put None instead of NaN
-        datastream_usages = datastream_usages.apply(np.nan_to_num).fillna(0)
+        # Put None instead of NaN (numeric columns only)
+        num_cols = datastream_usages.select_dtypes(include="number").columns
+        datastream_usages[num_cols] = datastream_usages[num_cols].apply(np.nan_to_num).fillna(0)
 
         logger.debug(
             f"{len(datastream_usages)} datastream usages found for "
@@ -384,18 +385,16 @@ class DeploymentDataProcessor:
                 .drop_duplicates(subset=["datastream"])
                 .set_index("datastream")["app"]
             )
-            ds_names = datastream_usages.index.get_level_values("datastream") if "datastream" in datastream_usages.index.names else datastream_usages.get("datastream", pd.Series())
-            datastream_usages["app"] = ds_names.map(app_map).fillna(ds_names).values
+            datastream_usages["app"] = datastream_usages["datastream"].map(app_map).fillna(datastream_usages["datastream"])
         else:
-            ds_names = datastream_usages.index.get_level_values("datastream") if "datastream" in datastream_usages.index.names else datastream_usages.get("datastream", "")
-            datastream_usages["app"] = ds_names.values if hasattr(ds_names, 'values') else ds_names
+            datastream_usages["app"] = datastream_usages["datastream"]
 
-        return list(datastream_usages.reset_index().itertuples(index=False))
+        return list(datastream_usages.itertuples(index=False))
 
     def _get_datastreams(self) -> Iterable:
         if self.index_data.empty:
             logger.warning("Empty dataset, skipping datastreams")
-            return ()
+            return []
 
         logger.debug(
             f"Grouping {len(self.index_data)} indices "
@@ -469,8 +468,9 @@ class DeploymentDataProcessor:
             columns={"@timestamp": "timestamp"}
         )
 
-        # Put None instead of NaN
-        datastreams = datastreams.apply(np.nan_to_num).fillna(0)
+        # Put None instead of NaN (numeric columns only)
+        num_cols = datastreams.select_dtypes(include="number").columns
+        datastreams[num_cols] = datastreams[num_cols].apply(np.nan_to_num).fillna(0)
 
         logger.debug(
             f"{len(datastreams)} datastreams found for "
@@ -491,7 +491,7 @@ class DeploymentDataProcessor:
         else:
             datastreams["app"] = datastreams["datastream"]
 
-        return list(datastreams.reset_index().itertuples(index=False))
+        return list(datastreams.itertuples(index=False))
 
     def _get_nodes(self):
         logger.debug(
@@ -501,10 +501,11 @@ class DeploymentDataProcessor:
 
         if not hasattr(self, "node_data") or self.node_data.empty:
             logger.warning("No node data, skipping nodes")
-            return ()
+            return []
 
-        nodes = self.node_data.reset_index().rename(columns={"@timestamp": "timestamp"})
-        nodes = nodes.apply(np.nan_to_num).fillna(0)
+        nodes = self.node_data.reset_index(drop=True).rename(columns={"@timestamp": "timestamp"})
+        num_cols = nodes.select_dtypes(include="number").columns
+        nodes[num_cols] = nodes[num_cols].apply(np.nan_to_num).fillna(0)
 
         logger.debug(
             f"{len(nodes)} nodes found for {self.elasticsearch_id} "
@@ -513,7 +514,7 @@ class DeploymentDataProcessor:
 
         nodes["dataset"] = "node"
 
-        return list(nodes.reset_index().itertuples(index=False))
+        return list(nodes.itertuples(index=False))
 
     def process(self, compute_usages: bool = False):
         res = self._get_datastreams() + self._get_nodes()

@@ -156,7 +156,10 @@ def _source_walk(
             break
 
         # Used for our next iteration
-        after = tuple(res["after_key"].values())
+        after = (
+            res["after_key"]["per_hour"],
+            res["after_key"]["per_elasticsearch_id"],
+        )
 
         yield from (
             (
@@ -184,7 +187,8 @@ def _analyze_chunk(
     def _as_elasticsearch_doc(tuple: namedtuple) -> dict:
         source = tuple._asdict()
         source["@timestamp"] = source.pop("timestamp").isoformat()
-        del source["index"]
+        source.pop("index", None)
+        source.pop("level_0", None)
 
         source["organization_id"] = organization_id
         source["organization_name"] = organization_name

@@ -827,7 +827,6 @@ class NodeStatsV7(Stats):
                 "node_stats.os.cgroup.memory.limit_in_bytes",
                 "node_stats.fs.total.total_in_bytes",
                 "node_stats.fs.total.available_in_bytes",
-                "source_node.host",
             ],
             gauge_fields=[
                 "node_stats.process.cpu.percent",
@@ -890,6 +889,8 @@ class NodeStatsV7(Stats):
             df["instance_type"] = None
             df["cloud_region"] = None
 
+        df["cloud_account_id"] = None
+
         return df[
             [
                 "@timestamp",
@@ -904,6 +905,7 @@ class NodeStatsV7(Stats):
                 "fs_available_in_bytes",
                 "instance_type",
                 "cloud_region",
+                "cloud_account_id",
             ]
         ]
 
