@@ -104,8 +104,14 @@ class DeploymentDataProcessor:
             cluster_stats_cls, es, stats_index_pattern
         ).search_as_dataframe([range_flt, id_filter])
 
+        logger.info(
+            f"[{self.elasticsearch_id}] cluster_data: "
+            f"{len(self.cluster_data)} rows, "
+            f"tiers={self.cluster_data['tier'].unique().tolist() if not self.cluster_data.empty and 'tier' in self.cluster_data.columns else 'N/A'}"
+        )
+
         if self.cluster_data.empty:
-            logger.warning(
+            logger.error(
                 f"No cluster data found for {self.elasticsearch_id} "
                 f"at {self.from_ts.strftime('%Y-%m-%d %H:%M:%S')}, "
                 f"skipping further processing"
@@ -118,8 +124,12 @@ class DeploymentDataProcessor:
             [range_flt, id_filter]
         )
 
+        logger.info(
+            f"[{self.elasticsearch_id}] node_df: {len(node_df)} rows"
+        )
+
         if node_df.empty:
-            logger.warning(
+            logger.error(
                 f"No node data found for {self.elasticsearch_id} "
                 f"at {self.from_ts.strftime('%Y-%m-%d %H:%M:%S')}, "
                 f"skipping further processing"
@@ -127,17 +137,35 @@ class DeploymentDataProcessor:
             self.index_data = pd.DataFrame()
             return
 
-        self.node_data = (
-            node_df
-            .merge(
-                self.cluster_data,
-                left_on=["@timestamp", "id"],
-                right_on=["@timestamp", "id"],
-                how="left",
-                suffixes=(None, ""),
-            )
-            .dropna(subset=["tier"])  # No tier information => not a data node (we drop)
+        merged = node_df.merge(
+            self.cluster_data,
+            left_on=["@timestamp", "id"],
+            right_on=["@timestamp", "id"],
+            how="left",
+            suffixes=(None, ""),
         )
+
+        logger.info(
+            f"[{self.elasticsearch_id}] after merge: {len(merged)} rows, "
+            f"tier null count: {merged['tier'].isna().sum()}, "
+            f"tier values: {merged['tier'].dropna().unique().tolist()[:5]}"
+        )
+
+        self.node_data = merged.dropna(subset=["tier"])
+
+        logger.info(
+            f"[{self.elasticsearch_id}] after dropna(tier): {len(self.node_data)} rows"
+        )
+
+        if self.node_data.empty:
+            logger.error(
+                f"All nodes dropped after tier merge for {self.elasticsearch_id}. "
+                f"Possible @timestamp mismatch between cluster_data and node_data. "
+                f"cluster_data timestamps: {self.cluster_data['@timestamp'].unique()[:3].tolist()}, "
+                f"node_df timestamps: {node_df['@timestamp'].unique()[:3].tolist()}"
+            )
+            self.index_data = pd.DataFrame()
+            return
 
         # For multi-tier nodes (e.g., cold+warm on same node), split cost evenly
         # across the tiers the node serves
