@@ -11,7 +11,8 @@ from .monitoring_stats_connector import (ClusterStats, ClusterStatsV7,
                                          NodeStats, NodeStatsV7,
                                          ShardStats, ShardStatsV7,
                                          elasticsearch_id_filter,
-                                         range_filter)
+                                         range_filter,
+                                         _roles_to_tiers)
 
 logger = logging.getLogger(__name__)
 
@@ -99,10 +100,20 @@ class DeploymentDataProcessor:
             ts_field,
         )
 
-        # Fetch cluster data first — needed for node tier mapping
+        # Fetch cluster data — needed for node tier mapping
         self.cluster_data = _make_stats(
             cluster_stats_cls, es, stats_index_pattern
         ).search_as_dataframe([range_flt, id_filter])
+
+        # If V7 cluster_stats didn't have cluster_state.nodes, try V8 metricbeat
+        if self.cluster_data.empty and is_v7:
+            logger.warning(
+                f"V7 cluster_state.nodes not found, "
+                f"falling back to V8 metricbeat for node tier info"
+            )
+            self.cluster_data = self._get_tier_from_v8_metricbeat(
+                es, monitoring_index_pattern, range_flt
+            )
 
         logger.info(
             f"[{self.elasticsearch_id}] cluster_data: "
@@ -112,7 +123,7 @@ class DeploymentDataProcessor:
 
         if self.cluster_data.empty:
             logger.error(
-                f"No cluster data found for {self.elasticsearch_id} "
+                f"No cluster/tier data found for {self.elasticsearch_id} "
                 f"at {self.from_ts.strftime('%Y-%m-%d %H:%M:%S')}, "
                 f"skipping further processing"
             )
@@ -272,6 +283,105 @@ class DeploymentDataProcessor:
             how="left",
             suffixes=(None, ""),
         )
+
+    def _get_tier_from_v8_metricbeat(self, es, monitoring_index_pattern, range_flt):
+        """
+        Fallback: get node tier info from V8 metricbeat node.stats documents.
+        These have elasticsearch.node.roles which we can map to tiers.
+        Returns a DataFrame matching ClusterStats output format.
+        """
+        try:
+            v8_pattern = monitoring_index_pattern or ".monitoring-es-8-*,.monitoring-es-9-*"
+            response = es.search(
+                index=v8_pattern,
+                size=0,
+                allow_no_indices=True,
+                ignore_unavailable=True,
+                expand_wildcards=["open", "hidden"],
+                query={
+                    "bool": {
+                        "filter": [
+                            {"exists": {"field": "elasticsearch.node.roles"}},
+                            range_flt,
+                        ]
+                    }
+                },
+                aggs={
+                    "per_node": {
+                        "terms": {"field": "elasticsearch.node.id", "size": 1000},
+                        "aggs": {
+                            "info": {
+                                "top_metrics": {
+                                    "metrics": [
+                                        {"field": "elasticsearch.node.name"},
+                                        {"field": "elasticsearch.cluster.name"},
+                                    ],
+                                    "sort": {"@timestamp": "desc"},
+                                }
+                            },
+                            "roles": {
+                                "top_hits": {
+                                    "size": 1,
+                                    "_source": ["elasticsearch.node.roles"],
+                                    "sort": [{"@timestamp": "desc"}],
+                                }
+                            },
+                            "per_10m": {
+                                "date_histogram": {
+                                    "field": "@timestamp",
+                                    "fixed_interval": "10m",
+                                },
+                            },
+                        },
+                    }
+                },
+            )
+
+            records = []
+            for node_bucket in response.get("aggregations", {}).get("per_node", {}).get("buckets", []):
+                node_id = node_bucket["key"]
+                metrics = node_bucket["info"]["top"][0]["metrics"]
+                node_name = metrics.get("elasticsearch.node.name", "unknown")
+                cluster_name = metrics.get("elasticsearch.cluster.name", self.elasticsearch_id)
+
+                # Get roles from top_hits
+                roles_hits = node_bucket["roles"]["hits"]["hits"]
+                if not roles_hits:
+                    continue
+                roles = (
+                    roles_hits[0]["_source"]
+                    .get("elasticsearch", {})
+                    .get("node", {})
+                    .get("roles", [])
+                )
+
+                tiers = _roles_to_tiers(roles)
+                if not tiers:
+                    continue
+
+                # Create one record per tier per 10-min bucket
+                for time_bucket in node_bucket["per_10m"]["buckets"]:
+                    ts = datetime.fromisoformat(time_bucket["key_as_string"])
+                    for tier in tiers:
+                        records.append({
+                            "@timestamp": ts,
+                            "id": node_id,
+                            "deployment_name": cluster_name,
+                            "elasticsearch_id": self.elasticsearch_id,
+                            "version": "unknown",
+                            "tier": tier,
+                        })
+
+            if records:
+                logger.info(f"V8 metricbeat fallback: found {len(records)} tier records for {len(set(r['id'] for r in records))} nodes")
+                return pd.DataFrame(records)
+            else:
+                logger.warning("V8 metricbeat fallback: no node roles found")
+                return pd.DataFrame()
+
+        except Exception as e:
+            logger.error(f"V8 metricbeat tier fallback failed: {e}")
+            return pd.DataFrame()
 
     def _enrich_app_field(self, es):
         """
