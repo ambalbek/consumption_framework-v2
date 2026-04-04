@@ -148,10 +148,17 @@ class DeploymentDataProcessor:
             self.index_data = pd.DataFrame()
             return
 
+        # Merge node data with cluster/tier data
+        # If cluster_data has @timestamp (normal flow), merge on both
+        # If not (V8 fallback), merge on id only — tier applies to all timestamps
+        if "@timestamp" in self.cluster_data.columns:
+            merge_keys = ["@timestamp", "id"]
+        else:
+            merge_keys = ["id"]
+
         merged = node_df.merge(
             self.cluster_data,
-            left_on=["@timestamp", "id"],
-            right_on=["@timestamp", "id"],
+            on=merge_keys,
             how="left",
             suffixes=(None, ""),
         )
@@ -288,7 +295,8 @@ class DeploymentDataProcessor:
         """
         Fallback: get node tier info from V8 metricbeat node.stats documents.
         These have elasticsearch.node.roles which we can map to tiers.
-        Returns a DataFrame matching ClusterStats output format.
+        Returns a DataFrame with id, tier, deployment_name, elasticsearch_id, version.
+        No @timestamp — will be merged on 'id' only.
         """
         try:
             v8_pattern = monitoring_index_pattern or ".monitoring-es-8-*,.monitoring-es-9-*"
@@ -326,12 +334,6 @@ class DeploymentDataProcessor:
                                     "sort": [{"@timestamp": "desc"}],
                                 }
                             },
-                            "per_10m": {
-                                "date_histogram": {
-                                    "field": "@timestamp",
-                                    "fixed_interval": "10m",
-                                },
-                            },
                         },
                     }
                 },
@@ -341,10 +343,8 @@ class DeploymentDataProcessor:
             for node_bucket in response.get("aggregations", {}).get("per_node", {}).get("buckets", []):
                 node_id = node_bucket["key"]
                 metrics = node_bucket["info"]["top"][0]["metrics"]
-                node_name = metrics.get("elasticsearch.node.name", "unknown")
                 cluster_name = metrics.get("elasticsearch.cluster.name", self.elasticsearch_id)
 
-                # Get roles from top_hits
                 roles_hits = node_bucket["roles"]["hits"]["hits"]
                 if not roles_hits:
                     continue
@@ -359,21 +359,20 @@ class DeploymentDataProcessor:
                 if not tiers:
                     continue
 
-                # Create one record per tier per 10-min bucket
-                for time_bucket in node_bucket["per_10m"]["buckets"]:
-                    ts = datetime.fromisoformat(time_bucket["key_as_string"])
-                    for tier in tiers:
-                        records.append({
-                            "@timestamp": ts,
-                            "id": node_id,
-                            "deployment_name": cluster_name,
-                            "elasticsearch_id": self.elasticsearch_id,
-                            "version": "unknown",
-                            "tier": tier,
-                        })
+                for tier in tiers:
+                    records.append({
+                        "id": node_id,
+                        "deployment_name": cluster_name,
+                        "elasticsearch_id": self.elasticsearch_id,
+                        "version": "unknown",
+                        "tier": tier,
+                    })
 
             if records:
-                logger.info(f"V8 metricbeat fallback: found {len(records)} tier records for {len(set(r['id'] for r in records))} nodes")
+                logger.info(
+                    f"V8 fallback: {len(records)} tier records, "
+                    f"{len(set(r['id'] for r in records))} nodes"
+                )
                 return pd.DataFrame(records)
             else:
                 logger.warning("V8 metricbeat fallback: no node roles found")
