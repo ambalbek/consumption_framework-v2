@@ -316,13 +316,15 @@ class DeploymentDataProcessor:
             )
 
             # Compute the cost for each datastream/tier for the chunk
+            # Divide by 2 (only search + storage here) so they sum to tier_cost
+            cost_per_dimension = datastream_usages["tier_cost"] / 2.0
             datastream_usages["search_cost"] = (
                 datastream_usages["search_query_time_in_seconds_pct"]
-                * datastream_usages["tier_cost"]
+                * cost_per_dimension
             )
             datastream_usages["storage_cost"] = (
                 datastream_usages["total_store_size_in_bytes_pct"]
-                * datastream_usages["tier_cost"]
+                * cost_per_dimension
             )
 
         datastream_usages = datastream_usages.drop(
@@ -416,15 +418,17 @@ class DeploymentDataProcessor:
             )
 
             # Compute the cost for each datastream/tier for the chunk
+            # Divide tier_cost by 3 so sum(search + indexing + storage) = tier_cost
+            cost_per_dimension = datastreams["tier_cost"] / 3.0
             datastreams["search_cost"] = (
                 datastreams["search_query_time_in_seconds_pct"]
-                * datastreams["tier_cost"]
+                * cost_per_dimension
             )
             datastreams["indexing_cost"] = (
-                datastreams["index_time_in_seconds_pct"] * datastreams["tier_cost"]
+                datastreams["index_time_in_seconds_pct"] * cost_per_dimension
             )
             datastreams["storage_cost"] = (
-                datastreams["total_store_size_in_bytes_pct"] * datastreams["tier_cost"]
+                datastreams["total_store_size_in_bytes_pct"] * cost_per_dimension
             )
 
         datastreams = datastreams.drop(
